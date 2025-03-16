@@ -1,0 +1,104 @@
+# stages:
+#   - test
+#   - build
+#   - docker
+
+# before_script:
+#   - echo "Start CI/CD"
+
+# variables:
+#   DOCKER_DRIVER: overlay2 # If you're using overlay as the storage driver, switch to overlay2. It's more efficient and recommended for Docker
+#   APP_IMAGE: aprijplt/kyc-service:$CI_COMMIT_REF_NAME  # Use Docker Hub image with GitLab tag as version
+#   DOCKER_TLS_CERTDIR: ""
+# #  CI_DEBUG_TRACE: "true"
+
+# .template-test:
+#   script:
+#     - echo "Testing application..."
+#     - echo "Active environment $ENVIRONMENT"
+#     - echo "DB URL $DB_URL"
+#     - echo "FLYWAY_ENV $FLYWAY_ENV"
+#     - export DB_URL=$DB_URL
+#     - export DB_USERNAME=$DB_USERNAME
+#     - export DB_PASSWORD=$DB_PASSWORD
+#     - export FLYWAY_ENV=$FLYWAY_ENV
+#     - export REDIS_URL=$REDIS_URL
+#     - export MINIO_URL=$MINIO_URL
+#     - export MINIO_ACCESS=$MINIO_ACCESS
+#     - export MINIO_SECRET=$MINIO_SECRET
+#     - export FAZPASS_GW_KEY=$FAZPASS_GW_KEY
+#     - ./gradlew --no-daemon --stacktrace check
+
+# .template-build:
+#   script:
+#     - echo "Building application..."
+#     - echo "Active environment $ENVIRONMENT"
+#     - echo "DB URL $DB_URL"
+#     - echo "FLYWAY_ENV $FLYWAY_ENV"
+#     - export DB_URL=$DB_URL
+#     - export DB_USERNAME=$DB_USERNAME
+#     - export DB_PASSWORD=$DB_PASSWORD
+#     - export FLYWAY_ENV=$FLYWAY_ENV
+#     - export REDIS_URL=$REDIS_URL
+#     - export MINIO_URL=$MINIO_URL
+#     - export MINIO_ACCESS=$MINIO_ACCESS
+#     - export MINIO_SECRET=$MINIO_SECRET
+#     - export FAZPASS_GW_KEY=$FAZPASS_GW_KEY
+#     - ./gradlew --no-daemon --stacktrace assemble
+
+
+# test-application:
+#   image: openjdk:17-buster
+#   stage: test
+#   environment:
+#     name: "Dev"
+#   extends: .template-test
+#   only:
+#     - master
+
+# # Build the Java application
+# build-application-dev:
+#   image: openjdk:17-buster
+#   stage: build
+#   environment:
+#     name: "Dev"
+#   extends: .template-build
+#   artifacts:
+#     paths:
+#       - build/libs/*.jar
+#     expire_in: 1 day
+#   only:
+#     - master
+
+# # Build the Java application
+# build-application-prod:
+#   image: openjdk:17-buster
+#   stage: build
+#   environment:
+#     name: "Prod"
+#   extends: .template-build
+#   artifacts:
+#     paths:
+#       - build/libs/*.jar
+#     expire_in: 1 day
+#   only:
+#     - tags
+
+# # Build the Docker image
+# docker-build:
+#   image: docker:latest
+#   services:
+#     - docker:dind
+#   stage: docker
+#   before_script:
+#     - docker login --username $DOCKER_HUB_USERNAME --password $DOCKER_HUB_PASSWORD
+#   script:
+#     - docker build -t $APP_IMAGE .
+#     - docker push $APP_IMAGE   # Push the image to GitLab's registry
+#   only:
+#     - master
+#     - tags
+
+
+# after_script:
+#   - echo "End CI/CD"
