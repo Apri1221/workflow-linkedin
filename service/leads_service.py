@@ -1,7 +1,7 @@
 from schema.entity.leads_summary import LeadsSummaryTable
 from schema.entity.column import Column
 import asyncio
-from .nav4 import scraping_leads
+from .nav4 import scrape_leads
 
 
 job_status_dict = {}
@@ -47,7 +47,7 @@ def start_search_leads_task(session_id, data):
 
 
 async def search_leads(session_id, data):
-    scraping_leads(session_id, data["payload"]["industry"], data["payload"]["jobTitle"], data["payload"]["seniorityLevel"], data["payload"]["yearsOfExperience"])
+    scrape_leads(session_id, data["payload"]["industry"], data["payload"]["jobTitle"], data["payload"]["seniorityLevel"], data["payload"]["yearsOfExperience"])
     job_status_dict[session_id] = None
 
     return {

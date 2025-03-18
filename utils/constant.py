@@ -11,7 +11,7 @@ class ConstantsTask:
 
 class SeniorityLevel:
     ENTRY = "Entry-level positions"
-    SENIOR = "Experienced professionals"
+    SENIOR = "Experienced Manager"
     MANAGER = "Mid-level management"
     DIRECTOR = "Senior management"
     VP = "Vice Presidents"
