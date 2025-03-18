@@ -74,6 +74,7 @@ def perform_login(driver, credentials):
     time.sleep(3)
     print("Login successful.")
 
+
 def close_overlay_if_present(driver):
     """Closes any overlay or modal that might be obstructing interaction."""
     try:
@@ -120,6 +121,7 @@ def function_filter_retry(driver, filter_xpath, option_xpath, placeholder_text=N
         EC.element_to_be_clickable((By.XPATH, option_xpath))
     ).click()
     time.sleep(1)
+
 
 def get_closest_match(extracted_value, options_list, score_cutoff=80):
     print(f"get_closest_match called with extracted_value: {extracted_value}, type: {type(extracted_value)}")
@@ -259,6 +261,7 @@ def apply_industry_filter(driver, value):
         print(f"Error applying industry filter: {e}")
     print("Industry Filter Applied.\n")
 
+
 def apply_years_experience_filter(driver, matched_experience):
     print(f"Applying Years of Experience Filter for: '{matched_experience}'...")
     years_experience_fieldset_xpath = "//fieldset[@data-x-search-filter='YEARS_AT_CURRENT_COMPANY']"
@@ -288,6 +291,7 @@ def apply_years_experience_filter(driver, matched_experience):
     except Exception as e:
         print(f"Error applying years of experience filter: {e}")
     print(f"Filter applied for: '{matched_experience}'.\n")
+
 
 def scroll_until_loaded(driver, pause_time=5, max_attempts=20, scroll_increment=500, consecutive_no_change_attempts=5, nudge_scroll_amount=100, nudge_attempts=2): # Added nudge parameters
     last_count = 0
@@ -335,7 +339,6 @@ def scroll_until_loaded(driver, pause_time=5, max_attempts=20, scroll_increment=
                 else: # else block executes if NO break in for loop (nudge didn't help)
                     print("  Nudge scroll did not load new leads; stopping scrolling.")
                     break # Break out of main while loop if nudge attempts failed
-
         else:
             no_change_count = 0
 
@@ -346,10 +349,10 @@ def scroll_until_loaded(driver, pause_time=5, max_attempts=20, scroll_increment=
             print("Reached end of scrollable content and no new content loaded. Stopping.")
             break
 
-
     return last_count
 
 
+# infinity scroll webdriver
 def scroll_down_using_keys(driver, pause_time=2, max_attempts=10):
     actions = ActionChains(driver)
     last_count = 0
@@ -366,6 +369,7 @@ def scroll_down_using_keys(driver, pause_time=2, max_attempts=10):
         last_count = current_count
         attempts += 1
     return last_count
+
 
 def scrape_leads(driver):
     """
@@ -485,6 +489,7 @@ def scrape_leads(driver):
     except Exception as e:
         print(f"Error scraping leads: {e}")
         return leads_data
+    
 
 def save_leads_to_csv(leads, filename="leads_output.csv"):
     try:
@@ -494,6 +499,7 @@ def save_leads_to_csv(leads, filename="leads_output.csv"):
     except Exception as e:
         print(f"Error saving leads data to CSV: {e}")
 
+
 # if __name__ == "__main__":
 def main_scrape_leads(session_id, industry, job_title, seniority_level, years_of_experience):
 
@@ -502,40 +508,31 @@ def main_scrape_leads(session_id, industry, job_title, seniority_level, years_of
 
     driver = configure_driver()
 
-    if perform_login(driver, config):
-        print("Login successful.")
-        try:
-            driver.get('https://www.linkedin.com/sales/search/people?viewAllFilters=true')
-            print("Successfully navigated to LinkedIn Sales Navigator search page.")
-        except Exception as e:
-            print(f"Error navigating to URL after login: {e}")
+    perform_login(driver, config)
+    # if perform_login(driver, config):
+    try:
+        driver.get('https://www.linkedin.com/sales/search/people?viewAllFilters=true')
+        print("Successfully navigated to LinkedIn Sales Navigator search page.")
+    except Exception as e:
+        print(f"Error navigating to URL after login: {e}")
 
-        job_title_value = job_title
-        seniority_value = seniority_level
-        industry_value = industry
-        experience_value = years_of_experience
+    job_title_value = job_title
+    seniority_value = seniority_level
+    industry_value = industry
+    experience_value = years_of_experience
 
-        matched_job_title = job_title_value  # No matching for job title
-        matched_seniority = get_closest_match(seniority_value, StaticValue().SENIORITY_LEVEL.values())
-        matched_industry = get_closest_match(industry_value, StaticValue().INDUSTRY.values(), score_cutoff=70)
-        matched_experience = get_closest_match(experience_value, StaticValue().YEARS_OF_EXPERIENCE.values(), score_cutoff=60)
+    matched_seniority = get_closest_match(seniority_value, StaticValue().SENIORITY_LEVEL.values())
+    matched_experience = get_closest_match(experience_value, StaticValue().YEARS_OF_EXPERIENCE.values(), score_cutoff=60)
 
-        print("Extracted Job Title:", matched_job_title)
-        print("Matched Seniority:", matched_seniority)
-        print("Matched Industry:", matched_industry)
-        print("Matched Years of Experience:", matched_experience)
+    apply_job_title_filter(driver, job_title_value)
+    apply_seniority_filter(driver, matched_seniority)
+    apply_years_experience_filter(driver, matched_experience)
+    apply_industry_filter(driver, industry_value)
 
-        apply_job_title_filter(driver, job_title_value)
-        apply_seniority_filter(driver, matched_seniority)
-        apply_years_experience_filter(driver, matched_experience)
-        apply_industry_filter(driver, industry_value)
+    # Scroll and scrape leads
+    leads = scrape_leads(driver)
+    print("Scraped Leads Data:")
+    for lead in leads:
+        print(lead)
 
-        # Scroll and scrape leads
-        leads = scrape_leads(driver)
-        print("Scraped Leads Data:")
-        for lead in leads:
-            print(lead)
-
-        save_leads_to_csv(leads, filename=f"{session_id}.csv")
-    else:
-        print("Login failed, exiting.")
+    save_leads_to_csv(leads, filename=f"{session_id}.csv")
