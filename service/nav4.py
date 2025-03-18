@@ -1,9 +1,7 @@
-import csv
 import json
 import re
 import os
 import time
-import random
 import logging
 from datetime import datetime
 from selenium import webdriver
@@ -16,7 +14,6 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     TimeoutException,
     StaleElementReferenceException,
-    ElementClickInterceptedException
 )
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.chrome.options import Options
@@ -25,6 +22,8 @@ from groq import Groq
 from dotenv import load_dotenv
 from fuzzywuzzy import process
 import pandas as pd
+from utils.constant import StaticValue
+
 
 # -------------------------------
 # Constants & Static Lists
@@ -34,51 +33,7 @@ MAX_RETRIES = 3
 
 driver = None
 # (You may eventually replace these with values from a constants module.)
-FUNCTIONS = [
-    "Administrative", "Business Development", "Consulting", "Education", "Engineering",
-    "Entrepreneurship", "Finance", "Healthcare Services", "Human Resources",
-    "Information Technology", "Legal", "Marketing", "Media & Communication",
-    "Military & Protective Services", "Operations", "Product Management",
-    "Program & Project Management", "Purchasing", "Quality Assurance", "Real Estate",
-    "Research", "Sales", "Support"
-]
-SENIORITY = [
-    "Entry Level", "Director", "In Training", "Experienced Manager", "Owner/Partner", "Entry Level Manager", "CXO",
-    "Vice President", "Strategic", "Senior"
-]
 YEAR_EXPERIENCE = ["Less than 1 year", "1 to 2 years", "3 to 5 years", "6 to 10 years", "More than 10 years"]
-INDUSTRY = [
-    "Accounting", "Airlines & Aviation", "Alternative Dispute Resolution", "Alternative Medicine", "Animation",
-    "Apparel & Fashion", "Architecture & Planning", "Arts & Crafts", "Automotive", "Aviation & Aerospace",
-    "Banking", "Biotechnology", "Broadcast Media", "Building Materials", "Business Supplies & Equipment",
-    "Capital Markets", "Chemicals", "Civic & Social Organization", "Civil Engineering", "Commercial Real Estate",
-    "Computer & Network Security", "Computer Games", "Computer Hardware", "Computer Networking", "Computer Software",
-    "Construction", "Consumer Electronics", "Consumer Goods", "Consumer Services", "Cosmetics",
-    "Dairy", "Defense & Space", "Design", "Education Management", "E-learning",
-    "Electrical & Electronic Manufacturing", "Entertainment", "Environmental Services", "Events Services", "Executive Office",
-    "Facilities Services", "Farming", "Financial Services", "Fine Art", "Fishery",
-    "Food & Beverages", "Food Production", "Fundraising", "Furniture", "Gambling & Casinos",
-    "Glass, Ceramics & Concrete", "Government Administration", "Government Relations", "Graphic Design", "Health, Wellness & Fitness",
-    "Higher Education", "Hospital & Health Care", "Hospitality", "Human Resources", "Import & Export",
-    "Individual & Family Services", "Industrial Automation", "Information Services", "Information Technology & Services", "Insurance",
-    "International Affairs", "International Trade & Development", "Internet", "Investment Banking", "Investment Management",
-    "Judiciary", "Law Enforcement", "Law Practice", "Legal Services", "Legislative Office",
-    "Leisure, Travel & Tourism", "Libraries", "Logistics & Supply Chain", "Luxury Goods & Jewelry", "Machinery",
-    "Management Consulting", "Maritime", "Marketing & Advertising", "Market Research", "Mechanical or Industrial Engineering",
-    "Media Production", "Medical Devices", "Medical Practice", "Mental Health Care", "Military",
-    "Mining & Metals", "Motion Pictures & Film", "Museums & Institutions", "Music", "Nanotechnology",
-    "Newspapers", "Nonprofit Organization Management", "Oil & Energy", "Online Media", "Outsourcing/Offshoring",
-    "Package/Freight Delivery", "Packaging & Containers", "Paper & Forest Products", "Performing Arts", "Pharmaceuticals",
-    "Philanthropy", "Photography", "Plastics", "Political Organization", "Primary/Secondary Education",
-    "Printing", "Professional Training & Coaching", "Program Development", "Public Policy", "Public Relations & Communications",
-    "Public Safety", "Publishing", "Railroad Manufacture", "Ranching", "Real Estate",
-    "Recreational Facilities & Services", "Religious Institutions", "Renewables & Environment", "Research", "Restaurants",
-    "Retail", "Security & Investigations", "Semiconductors", "Shipbuilding", "Sporting Goods",
-    "Sports", "Staffing & Recruiting", "Supermarkets", "Telecommunications", "Textiles",
-    "Think Tanks", "Tobacco", "Translation & Localization", "Transportation/Trucking/Railroad", "Utilities",
-    "Venture Capital & Private Equity", "Veterinary", "Warehousing", "Wholesale", "Wine & Spirits",
-    "Wireless", "Writing & Editing"
-]
 
 # -------------------------------
 # Utility Functions
@@ -185,56 +140,6 @@ def get_closest_match(extracted_value, options_list, score_cutoff=80):
         print("fuzzywuzzy returned None (no match found)")
     return None
 
-def parse_candidate_criteria(criteria_text):
-    prompt = (
-        "Your task is to extract candidate search criteria from the text provided and structure it as a valid JSON object.\n"
-        "The JSON object should contain the following keys:\n"
-        "- 'job title':  The desired job title of the candidate.\n"
-        "- 'seniority level': The desired seniority level of the candidate.\n"
-        "- 'industry': The industry or industries the candidate should have experience in.\n"
-        "- 'years of experience': The minimum number of years of relevant experience required.\n"
-        "\n"
-        "If a specific criterion is NOT mentioned in the candidate criteria text, set its corresponding JSON value to null.\n"
-        "Do not include any text or explanations outside of the JSON object in your response.\n"
-        "\n"
-        "Candidate criteria text:\n"
-        f"\"{criteria_text}\"\n"
-        "\n"
-        "Example of the desired JSON output format:\n"
-        "{\n"
-        '  "job title": "Head of Sustainability",\n'
-        '  "seniority level": "Entry Level",\n'
-        '  "industry": "Accounting",\n'
-        '  "years of experience": "Less than 1 year"\n'
-        "}\n"
-    )
-    load_dotenv()
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    response = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        model="llama-3.3-70b-versatile"
-    )
-    raw_output = response.choices[0].message.content
-    print(f"Raw Groq Output: {raw_output}")
-    structured_data = clean_groq_output(raw_output)
-    return structured_data
-
-def clean_groq_output(raw_text):
-    try:
-        json_match = re.search(r'({.*})', raw_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-            return json.loads(json_str)
-        else:
-            logging.warning("No JSON object found in Groq output.")
-            return None
-    except json.JSONDecodeError as e:
-        logging.error(f"JSONDecodeError cleaning Groq output: {e}")
-        logging.debug(f"Raw Groq output that failed to parse: {raw_text}")
-        return None
-    except Exception as e:
-        logging.exception("Unexpected error cleaning Groq output:")
-        return None
 
 def llm_analyze_criteria(criteria_text):
     """
@@ -264,8 +169,9 @@ def llm_analyze_criteria(criteria_text):
     except Exception as e:
         logging.error(f"Error parsing LLM output for good-to-have criteria: {e}")
         return {"good_to_have": []}
+    
 
-def apply_job_title_filter(driver, parsed_data):
+def apply_job_title_filter(driver, value):
     print("Applying Job Title Filter...")
     driver.get('https://www.linkedin.com/sales/search/people?viewAllFilters=true')
     time.sleep(10)
@@ -279,22 +185,21 @@ def apply_job_title_filter(driver, parsed_data):
     job_title_input = WebDriverWait(driver, 20).until(
         EC.presence_of_element_located((By.XPATH, job_title_input_xpath))
     )
-    extracted_job_title = parsed_data.get("job title")
-    job_title_input.send_keys(extracted_job_title)
-    print(f"Typed '{extracted_job_title}' into the job title filter input.")
+    job_title_input.send_keys(value)
+    print(f"Typed '{value}' into the job title filter input.")
     time.sleep(1)
-    include_button_xpath = f'//div[@aria-label="Include “{extracted_job_title}” in Current job title filter"]'
+    include_button_xpath = f'//div[@aria-label="Include “{value}” in Current job title filter"]'
     try:
         include_button = WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((By.XPATH, include_button_xpath))
         )
         include_button.click()
-        print(f"Clicked 'Include' for job title '{extracted_job_title}'.")
+        print(f"Clicked 'Include' for job title '{value}'.")
         time.sleep(2)
     except Exception as e:
         print(f"Error clicking 'Include' button for job title: {e}")
 
-def apply_seniority_filter(driver, parsed_data, matched_seniority):
+def apply_seniority_filter(driver, matched_seniority):
     print(f"Applying Seniority Level Filter for: '{matched_seniority}'...")
     seniority_fieldset_xpath = "//fieldset[@data-x-search-filter='SENIORITY_LEVEL']"
     expand_seniority_button_xpath = "//fieldset[@data-x-search-filter='SENIORITY_LEVEL']//button[@aria-expanded='false'][.//span[contains(text(), 'Expand')]]"
@@ -322,9 +227,9 @@ def apply_seniority_filter(driver, parsed_data, matched_seniority):
     except Exception as e:
         print(f"Error applying seniority level filter for '{matched_seniority}': {e}")
 
-def apply_industry_filter(driver, parsed_data):
+def apply_industry_filter(driver, value):
     print("Applying Industry Filter...")
-    industry = parsed_data.get("industry")
+    industry = value
     if not industry:
         print("No industry extracted, skipping filter.\n")
         return
@@ -354,7 +259,7 @@ def apply_industry_filter(driver, parsed_data):
         print(f"Error applying industry filter: {e}")
     print("Industry Filter Applied.\n")
 
-def apply_years_experience_filter(driver, parsed_data, matched_experience):
+def apply_years_experience_filter(driver, matched_experience):
     print(f"Applying Years of Experience Filter for: '{matched_experience}'...")
     years_experience_fieldset_xpath = "//fieldset[@data-x-search-filter='YEARS_AT_CURRENT_COMPANY']"
     years_experience_dropdown_list_xpath = '//ul[@role="listbox" and @aria-label="Years in current company filter suggestions"]'
@@ -589,13 +494,15 @@ def save_leads_to_csv(leads, filename="leads_output.csv"):
     except Exception as e:
         print(f"Error saving leads data to CSV: {e}")
 
-if __name__ == "__main__":
-
+# if __name__ == "__main__":
+def main_scrape_leads(session_id, industry, job_title, seniority_level, years_of_experience):
 
     with open("config.json", "r") as config_file:
         config = json.load(config_file)
 
-    if perform_login():
+    driver = configure_driver()
+
+    if perform_login(driver, config):
         print("Login successful.")
         try:
             driver.get('https://www.linkedin.com/sales/search/people?viewAllFilters=true')
@@ -603,48 +510,25 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error navigating to URL after login: {e}")
 
-        # Candidate criteria input
-        criteria_text = """
-        Looking for [Head of Sustainability] for [10] leads
-        The leads are ideally to possess a [Entry Level] level
-        have an experience in [Business Consulting and Services]industry
-        with a minimum [Less than 1] years of experience
-
-        It is good if the leads also have:
-        1. Experience in facilities procurement
-        2. Interest in waste management and circular economy
-        3. Knowledge of sustainability practices
-        """
-
-        parsed_data = parse_candidate_criteria(criteria_text)
-        print(f"Parsed data from Groq: {parsed_data}")
-
-        # Check parsed data before matching
-        job_title_value = parsed_data.get("job title")
-        seniority_value = parsed_data.get("seniority level")
-        industry_value = parsed_data.get("industry")
-        experience_value = parsed_data.get("years of experience")
-
-        print(f"Job Title: {job_title_value}")
-        print(f"Seniority: {seniority_value}")
-        print(f"Industry: {industry_value}")
-        print(f"Experience: {experience_value}")
-        print(f"YEAR_EXPERIENCE List: {YEAR_EXPERIENCE}")
+        job_title_value = job_title
+        seniority_value = seniority_level
+        industry_value = industry
+        experience_value = years_of_experience
 
         matched_job_title = job_title_value  # No matching for job title
-        matched_seniority = get_closest_match(seniority_value, SENIORITY)
-        matched_industry = get_closest_match(industry_value, INDUSTRY, score_cutoff=70)
-        matched_experience = get_closest_match(experience_value, YEAR_EXPERIENCE, score_cutoff=60)
+        matched_seniority = get_closest_match(seniority_value, StaticValue().SENIORITY_LEVEL.values())
+        matched_industry = get_closest_match(industry_value, StaticValue().INDUSTRY.values(), score_cutoff=70)
+        matched_experience = get_closest_match(experience_value, StaticValue().YEARS_OF_EXPERIENCE.values(), score_cutoff=60)
 
         print("Extracted Job Title:", matched_job_title)
         print("Matched Seniority:", matched_seniority)
         print("Matched Industry:", matched_industry)
         print("Matched Years of Experience:", matched_experience)
 
-        apply_job_title_filter(driver, parsed_data)
-        apply_seniority_filter(driver, parsed_data, matched_seniority)
-        apply_years_experience_filter(driver, parsed_data, matched_experience)
-        apply_industry_filter(driver, parsed_data)
+        apply_job_title_filter(driver, job_title_value)
+        apply_seniority_filter(driver, matched_seniority)
+        apply_years_experience_filter(driver, matched_experience)
+        apply_industry_filter(driver, industry_value)
 
         # Scroll and scrape leads
         leads = scrape_leads(driver)
@@ -652,6 +536,6 @@ if __name__ == "__main__":
         for lead in leads:
             print(lead)
 
-        save_leads_to_csv(leads, filename="leads_output.csv")
+        save_leads_to_csv(leads, filename=f"{session_id}.csv")
     else:
         print("Login failed, exiting.")
