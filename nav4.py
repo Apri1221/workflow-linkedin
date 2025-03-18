@@ -307,76 +307,66 @@ def apply_industry_filter(driver, parsed_data):
         print(f"Error applying industry filter: {e}")
     print("Industry Filter Applied.\n") # Added newline
 
+
 def apply_years_experience_filter(driver, parsed_data, matched_experience):
-    print(f"Applying Years of Experience Filter (Years in current company - clicking option) for: '{matched_experience}'...")
-    years_experience = parsed_data.get("years of experience")
+    print(f"Applying Years of Experience Filter for: '{matched_experience}'...")
     if not matched_experience:
         print("No matched years of experience, skipping filter.\n")
         return
 
     years_experience_fieldset_xpath = "//fieldset[@data-x-search-filter='YEARS_AT_CURRENT_COMPANY']"
-    expand_years_experience_button_xpath = "//fieldset[@data-x-search-filter='YEARS_AT_CURRENT_COMPANY']//button[@aria-expanded='false'][.//span[contains(text(), 'Expand')]]"
-    years_experience_option_xpath = f'//li[@role="option" and contains(@aria-label, "Include “{matched_experience}” in Years in current company filter")]/div[@class="button--fill-click-area"]' # Refined XPath
-
+    years_experience_dropdown_list_xpath = '//ul[@role="listbox" and @aria-label="Years in current company filter suggestions"]'
+    # Adjusted XPath: targeting the <li> (or its inner <div>) using normalize-space
+    years_experience_option_xpath = f'//li[@role="option" and contains(normalize-space(.), "{matched_experience}")]/div'
 
     try:
-        years_experience_fieldset = WebDriverWait(driver, 40).until(
+        # Wait for and click the fieldset to expand the dropdown
+        fieldset = WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((By.XPATH, years_experience_fieldset_xpath))
         )
-        driver.execute_script("arguments[0].scrollIntoView(true);", years_experience_fieldset)
+        driver.execute_script("arguments[0].scrollIntoView(true);", fieldset)
         time.sleep(1)
-        years_experience_fieldset.click() # Expand filter
+        fieldset.click()
 
-        # 1. Click "Expand" button
-        expand_button = WebDriverWait(driver, 60).until( # Increased timeout to 60s
-            EC.element_to_be_clickable((By.XPATH, expand_years_experience_button_xpath))
+        print("Waiting for Years of Experience dropdown list to be visible...")
+        dropdown_list = WebDriverWait(driver, 20).until(
+            EC.visibility_of_element_located((By.XPATH, years_experience_dropdown_list_xpath))
         )
-        expand_button.click()
-        print("Clicked 'Expand' button for Years in current company filter.")
-        time.sleep(2)
+        print("Dropdown list is visible.")
 
-        # 2. Find the <div> option
-        print(f"Attempting to find years of experience option <div> for '{matched_experience}' using XPath: {years_experience_option_xpath}") # Debug log XPath
-
-        years_experience_option_element = WebDriverWait(driver, 60).until( # Increased timeout to 60s
-            EC.presence_of_element_located((By.XPATH, years_experience_option_xpath)) # Use presence_of_element_located
+        print(f"Searching for option element for '{matched_experience}' using XPath: {years_experience_option_xpath}")
+        option_element = WebDriverWait(driver, 60).until(
+            EC.element_to_be_clickable((By.XPATH, years_experience_option_xpath))
         )
-        print(f"Found years of experience option element (presence_of_element_located): {years_experience_option_element}") # Debug print element
-        time.sleep(1) # Wait a bit after element presence is confirmed
+        print("Option element found. Outer HTML:", option_element.get_attribute('outerHTML'))
+        time.sleep(1)
+        driver.execute_script("arguments[0].scrollIntoView(true);", option_element)
+        time.sleep(1)
 
-        # 3. Scroll to element using JavaScript
-        print("Scrolling to years of experience option element using JavaScript...") # Debug log
-        driver.execute_script("arguments[0].scrollIntoView(true);", years_experience_option_element)
-        time.sleep(1) # Wait after scrolling
-
-        print("Attempting to click years of experience option...") # Debug log before click
-        years_experience_option_element.click()
-        print(f"Clicked years of experience option: '{matched_experience}'.")
+        print("Attempting to click the years of experience option...")
+        try:
+            option_element.click()
+            print(f"Clicked years of experience option: '{matched_experience}'.")
+        except ElementClickInterceptedException:
+            print("Click intercepted; attempting ActionChains click...")
+            from selenium.webdriver.common.action_chains import ActionChains
+            ActionChains(driver).move_to_element(option_element).click().perform()
+            print(f"Clicked years of experience option using ActionChains: '{matched_experience}'.")
         time.sleep(2)
-
 
     except TimeoutException:
-        timestamp = generate_timestamp() # Generate timestamp for filename
+        timestamp = generate_timestamp()
         screenshot_filename = f"timeout_screenshot_years_experience_{timestamp}.png"
-        driver.save_screenshot(screenshot_filename) # Capture screenshot on timeout
-        print(f"Timeout (presence_of_element_located): Years of experience option <div> for '{matched_experience}' not found within 60 seconds. Screenshot saved as: {screenshot_filename}") # Updated timeout message
+        driver.save_screenshot(screenshot_filename)
+        print(f"Timeout: Option for '{matched_experience}' not found. Screenshot saved as: {screenshot_filename}")
     except NoSuchElementException:
-        timestamp = generate_timestamp() # Generate timestamp for filename
+        timestamp = generate_timestamp()
         screenshot_filename = f"nosuchelement_screenshot_years_experience_{timestamp}.png"
-        driver.save_screenshot(screenshot_filename) # Capture screenshot on NoSuchElement
-        print(f"NoSuchElement: Years of experience option <div> for '{matched_experience}' not found. Screenshot saved as: {screenshot_filename}")
-    except ElementClickInterceptedException: # Catch interception exception
-        print(f"ElementClickIntercepted: Years of experience option click intercepted! Trying JavaScript click...")
-        try:
-            driver.execute_script("arguments[0].click();", years_experience_option_element) # JavaScript click fallback
-            print(f"Clicked years of experience option using JavaScript click.")
-            time.sleep(2)
-        except Exception as js_click_error:
-            print(f"JavaScript click also failed: {js_click_error}")
+        driver.save_screenshot(screenshot_filename)
+        print(f"NoSuchElement: Option for '{matched_experience}' not found. Screenshot saved as: {screenshot_filename}")
     except Exception as e:
-        print(f"Error applying years of experience filter: {e}")
-    print(f"Years of Experience Filter (Years in current company - clicking option) Applied for: '{matched_experience}'.\n")
-
+        print(f"Error applying filter: {e}")
+    print(f"Filter applied for: '{matched_experience}'.\n")
 
 # -----------------------
 # Main Workflow
@@ -438,8 +428,8 @@ if __name__ == "__main__":
 
         apply_job_title_filter(driver, parsed_data)
         apply_seniority_filter(driver, parsed_data, matched_seniority)
-        apply_industry_filter(driver, parsed_data)
         apply_years_experience_filter(driver, parsed_data, matched_experience)
+        apply_industry_filter(driver, parsed_data)
 
     else:
         print("Login failed, exiting.")
