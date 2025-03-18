@@ -18,14 +18,13 @@ from selenium.common.exceptions import (
     StaleElementReferenceException,
     ElementClickInterceptedException
 )
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from groq import Groq
 from dotenv import load_dotenv
 from fuzzywuzzy import process
 import pandas as pd
-from selenium.webdriver.common.action_chains import ActionChains
-
 
 # -------------------------------
 # Constants & Static Lists
@@ -34,7 +33,7 @@ SHORT_TIMEOUT = 10
 MAX_RETRIES = 3
 
 driver = None
-
+# (You may eventually replace these with values from a constants module.)
 FUNCTIONS = [
     "Administrative", "Business Development", "Consulting", "Education", "Engineering",
     "Entrepreneurship", "Finance", "Healthcare Services", "Human Resources",
@@ -43,14 +42,11 @@ FUNCTIONS = [
     "Program & Project Management", "Purchasing", "Quality Assurance", "Real Estate",
     "Research", "Sales", "Support"
 ]
-
 SENIORITY = [
     "Entry Level", "Director", "In Training", "Experienced Manager", "Owner/Partner", "Entry Level Manager", "CXO",
     "Vice President", "Strategic", "Senior"
 ]
-
 YEAR_EXPERIENCE = ["Less than 1 year", "1 to 2 years", "3 to 5 years", "6 to 10 years", "More than 10 years"]
-
 INDUSTRY = [
     "Accounting", "Airlines & Aviation", "Alternative Dispute Resolution", "Alternative Medicine", "Animation",
     "Apparel & Fashion", "Architecture & Planning", "Arts & Crafts", "Automotive", "Aviation & Aerospace",
@@ -91,38 +87,103 @@ def generate_timestamp():
     """Generates a timestamp string for filenames."""
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
-def login_to_site():
-    global driver
-    session_url = input("Enter the session URL: ")
-    session_id = input("Enter the session ID: ")
-
+def configure_driver(headless=False):
+    """Configures and returns a Chrome webdriver instance."""
     chrome_options = Options()
-    chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("start-maximized")
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    chrome_options.add_argument(f"user-agent={user_agent}")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+    if headless:
+        chrome_options.add_argument("--headless=new")
+    driver = webdriver.Chrome(
+        service=ChromeService(ChromeDriverManager().install()),
+        options=chrome_options
+    )
+    return driver
 
+def perform_login(driver, credentials):
+    """Logs into LinkedIn using provided credentials from config.json."""
+    driver.get("https://www.linkedin.com/login")
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.presence_of_element_located((By.NAME, "session_key"))
+    )
+    driver.find_element(By.NAME, "session_key").send_keys(credentials['email'])
+    driver.find_element(By.NAME, "session_password").send_keys(credentials['password'] + Keys.RETURN)
+    time.sleep(3)
+    print("Login successful.")
+
+def close_overlay_if_present(driver):
+    """Closes any overlay or modal that might be obstructing interaction."""
     try:
-        driver = webdriver.Remote(command_executor=session_url, options=chrome_options)
-        driver.session_id = session_id
-        print(f"Driver initialized with session ID: {driver.session_id}")
-        return True
-    except Exception as e:
-        print(f"Error in login_to_site: {e}")
-        return False
+        overlay = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div._scrim_1onvtb._dialog_1onvtb._visible_1onvtb._topLayer_1onvtb"))
+        )
+        print("Overlay detected.")
+        try:
+            close_button = overlay.find_element(By.CSS_SELECTOR, "button.artdeco-modal__dismiss")
+            close_button.click()
+            print("Overlay dismissed via close button.")
+        except NoSuchElementException:
+            webdriver.ActionChains(driver).move_by_offset(0, 0).click().perform()
+            print("Overlay dismissed via outside click.")
+        WebDriverWait(driver, 5).until(EC.invisibility_of_element(overlay))
+    except TimeoutException:
+        # No overlay found
+        pass
 
-def scroll_down_page(driver, scroll_pause_time=2, max_scrolls=5):
+def function_filter_retry(driver, filter_xpath, option_xpath, placeholder_text=None, input_value=None):
     """
-    Scrolls down the page to load additional content.
+    Generic retry function for filters.
+    Waits for the filter field to be clickable, optionally sends input, and clicks the desired option.
     """
-    last_height = driver.execute_script("return document.body.scrollHeight")
-    for i in range(max_scrolls):
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(scroll_pause_time)
-        new_height = driver.execute_script("return document.body.scrollHeight")
-        if new_height == last_height:
-            break
-        last_height = new_height
+    close_overlay_if_present(driver)
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.element_to_be_clickable((By.XPATH, filter_xpath))
+    ).click()
+    if placeholder_text and input_value:
+        for attempt in range(MAX_RETRIES):
+            try:
+                input_field = WebDriverWait(driver, SHORT_TIMEOUT).until(
+                    EC.element_to_be_clickable((By.XPATH, f"//input[@placeholder='{placeholder_text}']"))
+                )
+                input_field.clear()
+                input_field.send_keys(input_value)
+                break
+            except StaleElementReferenceException:
+                print(f"Stale element on input, retrying attempt {attempt+1}/{MAX_RETRIES}...")
+                time.sleep(1)
+                if attempt == MAX_RETRIES - 1:
+                    raise
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        EC.element_to_be_clickable((By.XPATH, option_xpath))
+    ).click()
+    time.sleep(1)
+
+def get_closest_match(extracted_value, options_list, score_cutoff=80):
+    print(f"get_closest_match called with extracted_value: {extracted_value}, type: {type(extracted_value)}")
+    if extracted_value is None:
+        return None
+
+    extracted_value_str = str(extracted_value)
+    print(f"After str() conversion, extracted_value_str: {extracted_value_str}, type: {type(extracted_value_str)}")
+    print(f"Options list (YEAR_EXPERIENCE): {options_list}")
+
+    best_match_tuple = process.extractOne(extracted_value_str, options_list)
+    if best_match_tuple:
+        best_match, score = best_match_tuple
+        print(f"fuzzywuzzy result: best_match: {best_match}, score: {score}")
+        if score >= score_cutoff:
+            return best_match
+    else:
+        print("fuzzywuzzy returned None (no match found)")
+    return None
 
 def parse_candidate_criteria(criteria_text):
     prompt = (
@@ -175,24 +236,34 @@ def clean_groq_output(raw_text):
         logging.exception("Unexpected error cleaning Groq output:")
         return None
 
-def get_closest_match(extracted_value, options_list, score_cutoff=80):
-    print(f"get_closest_match called with extracted_value: {extracted_value}, type: {type(extracted_value)}")
-    if extracted_value is None:
-        return None
-
-    extracted_value_str = str(extracted_value)
-    print(f"After str() conversion, extracted_value_str: {extracted_value_str}, type: {type(extracted_value_str)}")
-    print(f"Options list (YEAR_EXPERIENCE): {options_list}")
-
-    best_match_tuple = process.extractOne(extracted_value_str, options_list)
-    if best_match_tuple:
-        best_match, score = best_match_tuple
-        print(f"fuzzywuzzy result: best_match: {best_match}, score: {score}")
-        if score >= score_cutoff:
-            return best_match
-    else:
-        print("fuzzywuzzy returned None (no match found)")
-    return None
+def llm_analyze_criteria(criteria_text):
+    """
+    Uses Groq LLM to analyze the candidate criteria text for 'good-to-have' criteria.
+    Returns a JSON object with key 'good_to_have' containing a list of applicable criteria.
+    """
+    prompt = (
+        "Analyze the following candidate criteria text and determine which of the following 'good-to-have' criteria are applicable:\n"
+        "1. Experience in facilities procurement\n"
+        "2. Interest in waste management and circular economy\n"
+        "3. Knowledge of sustainability practices\n\n"
+        "Candidate criteria text:\n"
+        f"\"{criteria_text}\"\n\n"
+        "Return a JSON object with a key 'good_to_have' whose value is a list of the applicable criteria (choose from the above three) based on your analysis. "
+        "Do not include any extra text."
+    )
+    load_dotenv()
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    response = client.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        model="llama-3.3-70b-versatile"
+    )
+    raw_output = response.choices[0].message.content
+    logging.info(f"Raw LLM Good-to-Have Output: {raw_output}")
+    try:
+        return json.loads(raw_output)
+    except Exception as e:
+        logging.error(f"Error parsing LLM output for good-to-have criteria: {e}")
+        return {"good_to_have": []}
 
 def apply_job_title_filter(driver, parsed_data):
     print("Applying Job Title Filter...")
@@ -518,16 +589,13 @@ def save_leads_to_csv(leads, filename="leads_output.csv"):
     except Exception as e:
         print(f"Error saving leads data to CSV: {e}")
 
-# -------------------------------
-# Main Workflow
-# -------------------------------
 if __name__ == "__main__":
 
 
     with open("config.json", "r") as config_file:
         config = json.load(config_file)
 
-    if login_to_site():
+    if perform_login():
         print("Login successful.")
         try:
             driver.get('https://www.linkedin.com/sales/search/people?viewAllFilters=true')
