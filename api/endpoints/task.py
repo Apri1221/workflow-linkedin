@@ -1,12 +1,12 @@
 import logging
 from fastapi import APIRouter, Header, Depends
 from utils.constant import ConstantsTask
-from schema.dto.request.index import SearchLeadRequest, CommonHeaders
+from schema.dto.request.index import CommonHeaders
 from schema.dto.response.index import TaskResponse, DataTask
 import asyncio
 import globals
 from typing import Annotated
-from service.leads_service import start_search_leads_task
+from service.leads_service import start_search_leads_task, start_fetch_lead_data_task
 
 
 # ------------- configuration
@@ -107,3 +107,33 @@ async def search_leads(
                 }
             )
         }
+
+
+@router.post("/fetch-lead-data", response_model=TaskResponse)
+async def search_leads(
+    header: CommonHeaders = Depends(common_headers_dependency)
+):
+    session_id = header.sessionId
+    current_task = ConstantsTask.SEARCH_LEADS
+    next_task = ConstantsTask.ANALYZE_LEAD_DATA
+    # async with state_lock:
+    #     data = globals.global_state.get(session_id)
+    #     if not data:
+    #         raise Exception("Session not found")
+    #     if data["next_task"] != current_task:
+    #         raise Exception("Invalid task order")
+        
+    start_fetch_lead_data_task(session_id)
+    return {
+        "success": True,
+        "data": DataTask(
+            results = [],
+            state = {
+                "sessionId": session_id
+            },
+            next = {
+                "task": next_task,
+                "payload": None
+            }
+        )
+    }

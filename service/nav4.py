@@ -1,28 +1,18 @@
 import json
-import re
 import os
 import time
 import logging
-from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import (
-    NoSuchElementException,
-    TimeoutException,
-    StaleElementReferenceException,
-)
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 from groq import Groq
 from dotenv import load_dotenv
 from fuzzywuzzy import process
 import pandas as pd
 from utils.constant import StaticValue
+from service.util_service import perform_login, configure_driver, close_overlay_if_present
 
 
 # -------------------------------
@@ -35,92 +25,11 @@ driver = None
 # (You may eventually replace these with values from a constants module.)
 YEAR_EXPERIENCE = ["Less than 1 year", "1 to 2 years", "3 to 5 years", "6 to 10 years", "More than 10 years"]
 
+
+
+
 # -------------------------------
 # Utility Functions
-
-def generate_timestamp():
-    """Generates a timestamp string for filenames."""
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-def configure_driver(headless=False):
-    """Configures and returns a Chrome webdriver instance."""
-    chrome_options = Options()
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("start-maximized")
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    chrome_options.add_argument(f"user-agent={user_agent}")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option("useAutomationExtension", False)
-    if headless:
-        chrome_options.add_argument("--headless=new")
-    driver = webdriver.Chrome(
-        service=ChromeService(ChromeDriverManager().install()),
-        options=chrome_options
-    )
-    return driver
-
-def perform_login(driver, credentials):
-    """Logs into LinkedIn using provided credentials from config.json."""
-    driver.get("https://www.linkedin.com/login")
-    WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.presence_of_element_located((By.NAME, "session_key"))
-    )
-    driver.find_element(By.NAME, "session_key").send_keys(credentials['email'])
-    driver.find_element(By.NAME, "session_password").send_keys(credentials['password'] + Keys.RETURN)
-    time.sleep(3)
-    print("Login successful.")
-
-
-def close_overlay_if_present(driver):
-    """Closes any overlay or modal that might be obstructing interaction."""
-    try:
-        overlay = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div._scrim_1onvtb._dialog_1onvtb._visible_1onvtb._topLayer_1onvtb"))
-        )
-        print("Overlay detected.")
-        try:
-            close_button = overlay.find_element(By.CSS_SELECTOR, "button.artdeco-modal__dismiss")
-            close_button.click()
-            print("Overlay dismissed via close button.")
-        except NoSuchElementException:
-            webdriver.ActionChains(driver).move_by_offset(0, 0).click().perform()
-            print("Overlay dismissed via outside click.")
-        WebDriverWait(driver, 5).until(EC.invisibility_of_element(overlay))
-    except TimeoutException:
-        # No overlay found
-        pass
-
-def function_filter_retry(driver, filter_xpath, option_xpath, placeholder_text=None, input_value=None):
-    """
-    Generic retry function for filters.
-    Waits for the filter field to be clickable, optionally sends input, and clicks the desired option.
-    """
-    close_overlay_if_present(driver)
-    WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.element_to_be_clickable((By.XPATH, filter_xpath))
-    ).click()
-    if placeholder_text and input_value:
-        for attempt in range(MAX_RETRIES):
-            try:
-                input_field = WebDriverWait(driver, SHORT_TIMEOUT).until(
-                    EC.element_to_be_clickable((By.XPATH, f"//input[@placeholder='{placeholder_text}']"))
-                )
-                input_field.clear()
-                input_field.send_keys(input_value)
-                break
-            except StaleElementReferenceException:
-                print(f"Stale element on input, retrying attempt {attempt+1}/{MAX_RETRIES}...")
-                time.sleep(1)
-                if attempt == MAX_RETRIES - 1:
-                    raise
-    WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.element_to_be_clickable((By.XPATH, option_xpath))
-    ).click()
-    time.sleep(1)
 
 
 def get_closest_match(extracted_value, options_list, score_cutoff=80):
@@ -201,6 +110,7 @@ def apply_job_title_filter(driver, value):
     except Exception as e:
         print(f"Error clicking 'Include' button for job title: {e}")
 
+
 def apply_seniority_filter(driver, matched_seniority):
     print(f"Applying Seniority Level Filter for: '{matched_seniority}'...")
     seniority_fieldset_xpath = "//fieldset[@data-x-search-filter='SENIORITY_LEVEL']"
@@ -228,6 +138,7 @@ def apply_seniority_filter(driver, matched_seniority):
         time.sleep(2)
     except Exception as e:
         print(f"Error applying seniority level filter for '{matched_seniority}': {e}")
+
 
 def apply_industry_filter(driver, value):
     print("Applying Industry Filter...")
@@ -500,7 +411,6 @@ def save_leads_to_csv(leads, filename="leads_output.csv"):
         print(f"Error saving leads data to CSV: {e}")
 
 
-# if __name__ == "__main__":
 def main_scrape_leads(session_id, industry, job_title, seniority_level, years_of_experience):
 
     with open("config.json", "r") as config_file:
@@ -509,9 +419,9 @@ def main_scrape_leads(session_id, industry, job_title, seniority_level, years_of
     driver = configure_driver()
 
     perform_login(driver, config)
-    # if perform_login(driver, config):
     try:
         driver.get('https://www.linkedin.com/sales/search/people?viewAllFilters=true')
+        close_overlay_if_present(driver)
         print("Successfully navigated to LinkedIn Sales Navigator search page.")
     except Exception as e:
         print(f"Error navigating to URL after login: {e}")

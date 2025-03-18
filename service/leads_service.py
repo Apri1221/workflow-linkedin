@@ -2,6 +2,7 @@ from schema.entity.leads_summary import LeadsSummaryTable
 from schema.entity.column import Column
 import asyncio
 from .nav4 import main_scrape_leads
+from .info_service import scrape_contact_info
 
 
 job_status_dict = {}
@@ -61,3 +62,9 @@ async def search_leads(session_id, data):
         "sessionId": session_id,
         "data": None  # untuk di donwload
     }
+
+
+def start_fetch_lead_data_task(session_id):
+    job_status_dict[session_id] = None
+    asyncio.create_task(scrape_contact_info(session_id=session_id))
+    return session_id

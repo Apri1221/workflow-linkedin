@@ -43,3 +43,4 @@ selenium
 groq
 webdriver_manager
 fuzzywuzzy
+pyperclip
