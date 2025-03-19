@@ -1,10 +1,9 @@
 from schema.entity.leads_summary import LeadsSummaryTable
 from schema.entity.column import Column
 import asyncio
-from .nav4 import scraping_leads
-from selenium import webdriver # Import webdriver for type hinting
-
-
+from .nav4 import main_scrape_leads
+from .info_service import scrape_contact_info
+from selenium import webdriver
 
 
 job_status_dict = {}
@@ -49,32 +48,28 @@ def start_search_leads_task(session_id: str, data: dict, driver: webdriver.Chrom
     return session_id
 
 
-async def search_leads(session_id: str, data: dict, driver: webdriver.Chrome): # driver is ALREADY passed to search_leads
-    """
-    Performs the lead search and scraping.
-
-    Args:
-        session_id: The session ID.
-        data: Task-specific data.
-        driver: The Selenium WebDriver instance (passed from start_search_leads_task).
-    """
+async def search_leads(session_id: str, data: dict, driver: webdriver.Chrome):
+    """Performs the lead search and scraping."""
+    # logger.info(f"search_leads: Starting lead scraping for session_id: {session_id}")
 
     try:
-        scraping_leads(
-            driver=driver,  # Pass the driver object as the FIRST argument!
-            session_id=session_id,
-            candidate_industry=data["payload"]["industry"],
-            candidate_job_title=data["payload"]["jobTitle"],
-            candidate_seniority_level=data["payload"]["seniorityLevel"],
-            candidate_years_experience=data["payload"]["yearsOfExperience"]
+        main_scrape_leads(
+            session_id=session_id, # Pass session_id 
+            driver=driver, # **Pass the driver argument!**
+            industry=data["payload"]["industry"], 
+            job_title=data["payload"]["jobTitle"], 
+            seniority_level=data["payload"]["seniorityLevel"], 
+            years_of_experience=data["payload"]["yearsOfExperience"] # Pass years_of_experience
         )
         job_status_dict[session_id] = None
+        # logger.info(f"search_leads: Lead scraping COMPLETED for session_id: {session_id}")
 
     except Exception as e:
-        job_status_dict[session_id] = "Error" # Set job status to error
+        # logger.error(f"search_leads: Error during lead scraping for session_id {session_id}: {e}", exc_info=True)
+        job_status_dict[session_id] = "Error"
         raise  # Re-raise exception to be handled by endpoint
 
     return {
         "sessionId": session_id,
-        "data": None  # untuk di donwload
+        "data": None  # for download later
     }
