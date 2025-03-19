@@ -22,9 +22,9 @@ class SeniorityLevel:
 
 class YearsOfExperience:
     LESS_THAN_ONE_YEAR = "Less than 1 year"
-    ONE_TO_TWO_YEARS = "1-2 years"
-    THREE_TO_FIVE_YEARS = "3-5 years"
-    SIX_TO_TEN_YEARS = "6-10 years"
+    ONE_TO_TWO_YEARS = "1 to 2 years"
+    THREE_TO_FIVE_YEARS = "3 to 5 years"
+    SIX_TO_TEN_YEARS = "6 to 10 years"
     MORE_THAN_TEN_YEARS = "More than 10 years"
 
 class Functions:

@@ -186,7 +186,7 @@ SENIORITY = [
     "Vice President","Strategic","Senior"
 ]
 
-YEAR_EXPERIENCE = ["Less than 1 year","1-2 years","3-5 years","6-10 years","More than 10 years"]
+YEAR_EXPERIENCE = ["Less than 1 year","1 to 2 years","3 to 5 years","6 to 10 years","More than 10 years"]
 
 INDUSTRY = [
     "Accounting", "Airlines & Aviation", "Alternative Dispute Resolution", "Alternative Medicine", "Animation",

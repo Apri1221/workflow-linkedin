@@ -196,100 +196,75 @@ def apply_years_experience_filter(driver, matched_experience):
         print(f"Error applying years of experience filter: {e}")
     print(f"Filter applied for: '{matched_experience}'.\n")
 
-def scroll_until_loaded(driver, pause_time=5, max_attempts=20, scroll_increment=500, consecutive_no_change_attempts=5, nudge_scroll_amount=100, nudge_attempts=2): # Added nudge parameters
-    last_count = 0
+
+def scroll_infinite_scroll_data_attribute(driver, scrollable_element=None, pause_time=10, max_attempts=15, initial_wait=5, step_wait=3):
+    """
+    Performs infinite scroll by repeatedly scrolling to elements with 'data-scroll-into-view' attribute.
+    """
+    if scrollable_element:
+        print("Infinite scroll using data-scroll-into-view within specified element...")
+    else:
+        print("Infinite scroll using data-scroll-into-view on document body...")
+
+    print(f"Waiting {initial_wait} seconds before starting data-attribute based infinite scroll...")
+    time.sleep(initial_wait)
+
     attempts = 0
-    no_change_count = 0
-    scroll_position = 0 # Keep track of current scroll position
+    last_lead_count = 0
 
     while attempts < max_attempts:
-        current_scroll_height = driver.execute_script("return document.body.scrollHeight")
+        scroll_elements = driver.find_elements(By.CSS_SELECTOR, "[data-scroll-into-view]") # Find all elements with the attribute
+        current_lead_items = driver.find_elements(By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")
+        current_lead_count = len(current_lead_items)
+        print(f"Current lead count: {current_lead_count}")
 
-        scroll_increment_js = f"window.scrollBy(0, {scroll_increment});" # Scroll by a smaller increment
-        driver.execute_script(scroll_increment_js)
-        scroll_position += scroll_increment # Update scroll position
+        if current_lead_count > last_lead_count:
+            print("New leads loaded.")
+            last_lead_count = current_lead_count
+            attempts = 0  # Reset attempts counter
 
-        time.sleep(pause_time)
-        new_scroll_height = driver.execute_script("return document.body.scrollHeight")
+            if scroll_elements:
+                last_scroll_element = scroll_elements[-1] # Scroll to the very last element with the data attribute
+                driver.execute_script("arguments[0].scrollIntoView(true);", last_scroll_element)
+                print("Scrolled to the last data-scroll-into-view element.")
+            else:
+                print("No data-scroll-into-view elements found to scroll to.")
 
-        lead_items = driver.find_elements(By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")
-        current_count = len(lead_items)
-        print(f"Scroll attempt {attempts+1}: Found {current_count} leads, Scroll Height changed: {new_scroll_height > current_scroll_height}, Scroll Pos: {scroll_position}")
-
-        if current_count == last_count:
-            no_change_count += 1
-            if no_change_count >= consecutive_no_change_attempts:
-                print(f"No new leads for {consecutive_no_change_attempts} attempts.")
-
-                # --- Nudge Scroll Attempt ---
-                for nudge_attempt in range(nudge_attempts):
-                    print(f"Nudge Scroll Attempt {nudge_attempt+1}/{nudge_attempts}")
-                    driver.execute_script(f"window.scrollBy(0, -{nudge_scroll_amount});") # Scroll UP slightly
-                    time.sleep(pause_time/2)
-                    driver.execute_script(f"window.scrollBy(0, {nudge_scroll_amount});")  # Scroll DOWN again
-                    time.sleep(pause_time/2)
-
-                    lead_items_after_nudge = driver.find_elements(By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")
-                    nudge_current_count = len(lead_items_after_nudge)
-                    print(f"  Nudge attempt {nudge_attempt+1}: Lead count after nudge: {nudge_current_count}")
-
-                    if nudge_current_count > current_count: # Check if nudge helped load new leads
-                        print("  Nudge scroll loaded new leads! Resuming regular scroll.")
-                        current_count = nudge_current_count # Update count, reset no_change_count, break nudge loop
-                        no_change_count = 0
-                        last_count = current_count
-                        break # Break out of nudge attempts and continue regular scroll
-                else: # else block executes if NO break in for loop (nudge didn't help)
-                    print("  Nudge scroll did not load new leads; stopping scrolling.")
-                    break # Break out of main while loop if nudge attempts failed
         else:
-            no_change_count = 0
+            attempts += 1
+            print(f"No new leads loaded, attempt {attempts}/{max_attempts}...")
+            if attempts >= max_attempts:
+                print("Stopping infinite scroll: Max attempts reached without new leads.")
+                break
 
-        last_count = current_count
-        attempts += 1
+        time.sleep(step_wait)
 
-        if scroll_position >= current_scroll_height and new_scroll_height == current_scroll_height:
-            print("Reached end of scrollable content and no new content loaded. Stopping.")
-            break
+    print("Infinite scroll using data-scroll-into-view completed.")
 
-    return last_count
-
-def scroll_down_using_keys(driver, pause_time=2, max_attempts=10):
-    actions = ActionChains(driver)
-    last_count = 0
-    attempts = 0
-    while attempts < max_attempts:
-        actions.send_keys(Keys.PAGE_DOWN).perform()
-        time.sleep(pause_time)
-        lead_items = driver.find_elements(By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")
-        current_count = len(lead_items)
-        print(f"Key scroll attempt {attempts+1}: Found {current_count} lead items")
-        if current_count == last_count:
-            print("No new leads loaded; stopping key scrolling.")
-            break
-        last_count = current_count
-        attempts += 1
-    return last_count
 
 
 def scrape_leads(driver):
     """
-    Scrolls the page to load all lead items and scrapes them.
-    Returns a list of dictionaries with lead details.
+    Scrolls the page using data-scroll-into-view infinite scroll and scrapes lead items.
     """
-    print("Scrolling to load all leads...")
-    # Try one of the scrolling methods below. You can switch between them.
-    # scroll_until_loaded(driver, pause_time=3, max_attempts=10)
-    scroll_down_using_keys(driver, pause_time=3, max_attempts=30)
-    # Alternatively, you could use:
-    # scroll_down_using_keys(driver, pause_time=2, max_attempts=10)
+    print("Identifying search results container for scrolling...")
+    search_results_container = WebDriverWait(driver, 30).until(
+        EC.presence_of_element_located((By.ID, "search-results-container"))
+    )
+    print("Search results container found.")
+
+    scroll_infinite_scroll_data_attribute(driver, scrollable_element=search_results_container, pause_time=10, max_attempts=15, initial_wait=5, step_wait=3) # Using data-attribute based infinite scroll
+
+    print("Waiting for lead items to be present after scrolling...")
+    WebDriverWait(driver, 30).until(
+        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3"))
+    )
+    print("Lead items found after scrolling.")
+
     print("Finished scrolling. Now scraping leads...")
 
     leads_data = []
     try:
-        WebDriverWait(driver, 30).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3"))
-        )
         lead_items = driver.find_elements(By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")
         print(f"Found {len(lead_items)} lead items on the page.")
 
@@ -300,80 +275,119 @@ def scrape_leads(driver):
             company = "NA"
             location = "NA"
 
-            # --- Extract Name ---
-            try:
-                name_element = WebDriverWait(item, 10).until( # Explicit wait here!
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "span[data-anonymize='person-name']"))
-                )
-                name = name_element.text.strip()
-            except Exception as e:
-                print(f"Lead {index+1}: Primary name extraction failed: {e}")
+            # --- Extract Name with Retry (No Changes) ---
+            for retry in range(MAX_RETRIES):
                 try:
-                    headshot_anchor = WebDriverWait(item, 5).until( # Explicit wait for fallback too
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='headshot-photo']"))
+                    name_element = WebDriverWait(item, SHORT_TIMEOUT).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "span[data-anonymize='person-name']"))
                     )
-                    img = headshot_anchor.find_element(By.TAG_NAME, "img")
-                    alt_text = img.get_attribute("alt")
-                    if alt_text:
-                        name = alt_text.strip().replace("Go to ", "").replace("’s profile", "")
+                    name = name_element.text.strip()
+                    break
                 except Exception as e:
-                    print(f"Lead {index+1}: Fallback name extraction failed: {e}")
-                    name = "NA"
+                    print(f"Lead {index+1}: Name extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries for name reached, using fallback.")
+                        try:
+                            headshot_anchor = WebDriverWait(item, SHORT_TIMEOUT).until(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='headshot-photo']"))
+                            )
+                            img = headshot_anchor.find_element(By.TAG_NAME, "img")
+                            alt_text = img.get_attribute("alt")
+                            if alt_text:
+                                name = alt_text.strip().replace("Go to ", "").replace("’s profile", "")
+                        except Exception as fallback_e:
+                            print(f"Lead {index+1}: Fallback name extraction failed: {fallback_e}")
+                            name = "NA"
 
-            # --- Extract Profile Link ---
-            try:
-                profile_anchor = WebDriverWait(item, 10).until( # Explicit wait here!
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__title a"))
-                )
-                profile_link = profile_anchor.get_attribute("href")
-            except Exception as e:
-                print(f"Lead {index+1}: Primary profile link extraction failed: {e}")
+            # --- Extract Title with Retry (No Changes) ---
+            for retry in range(MAX_RETRIES):
                 try:
-                    headshot_anchor = WebDriverWait(item, 5).until( # Explicit wait for fallback too
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='headshot-photo']"))
+                    title_element = WebDriverWait(item, SHORT_TIMEOUT).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__subtitle span[data-anonymize='title']"))
                     )
-                    href = headshot_anchor.get_attribute("href")
-                    if href:
-                        profile_link = "https://www.linkedin.com" + href if href.startswith("/") else href
-                    else:
-                        profile_link = "NA"
+                    title = title_element.text.strip()
+                    break
                 except Exception as e:
-                    print(f"Lead {index+1}: Fallback profile link extraction failed: {e}")
-                    profile_link = "NA"
+                    print(f"Lead {index+1}: Title extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries for title reached, using NA.")
+                        title = "NA"
 
-            # --- Extract Title ---
-            try:
-                title_element = WebDriverWait(item, 10).until( # Explicit wait here!
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "span[data-anonymize='title']"))
-                )
-                title = title_element.text.strip()
-            except Exception as e:
-                print(f"Lead {index+1}: Title extraction failed: {e}")
-                title = "NA"
+            # --- Extract Profile Link with Retry (No Changes) ---
+            for retry in range(MAX_RETRIES):
+                try:
+                    profile_anchor = WebDriverWait(item, SHORT_TIMEOUT).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__title a.ember-view"))
+                    )
+                    profile_link = profile_anchor.get_attribute("href")
+                    break
+                except Exception as e:
+                    print(f"Lead {index+1}: Profile link extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries for profile link reached, using fallback.")
+                        try:
+                            headshot_anchor = WebDriverWait(item, SHORT_TIMEOUT).until(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='headshot-photo']"))
+                            )
+                            href = headshot_anchor.get_attribute("href")
+                            if href:
+                                profile_link = "https://www.linkedin.com" + href if href.startswith("/") else href
+                            else:
+                                profile_link = "NA"
+                        except Exception as fallback_e:
+                            print(f"Lead {index+1}: Fallback profile link extraction failed: {fallback_e}")
+                            profile_link = "NA"
 
-            # --- Extract Company ---
-            try:
-                company_element = WebDriverWait(item, 10).until( # Explicit wait here!
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='company-name']"))
-                )
-                company = company_element.text.strip()
-            except Exception as e:
-                print(f"Lead {index+1}: Company extraction failed: {e}")
-                company = "NA"
+            # --- Extract Company with Retry (Modified with 3rd Fallback) ---
+            for retry in range(MAX_RETRIES):
+                try:
+                    # 1st Attempt: More general <a> tag selector
+                    company_element = WebDriverWait(item, SHORT_TIMEOUT).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__subtitle a"))
+                    )
+                    company = company_element.text.strip()
+                    break
+                except Exception as e:
+                    print(f"Lead {index+1}: Company extraction attempt {retry+1} (using <a> tag) failed: {e}")
+                    if retry == MAX_RETRIES - 1: # On last retry, try fallbacks
+                        print(f"Lead {index+1}: Fallback sequence for company...")
+                        try:
+                            # 2nd Fallback: Text after separator
+                            company_element_fallback_text = WebDriverWait(item, SHORT_TIMEOUT).until(
+                                EC.presence_of_element_located((By.XPATH, ".//div[@class='artdeco-entity-lockup__subtitle']//span[@class='separator--middot']/following-sibling::text()[1]"))
+                            )
+                            company = company_element_fallback_text.get_attribute('textContent').strip().replace('See more about', '').strip()
+                            break # If fallback successful, break retry loop
+                        except:
+                            print(f"Lead {index+1}: Fallback company extraction (text after separator) failed.")
+                            try:
+                                # 3rd Fallback: aria-label of button
+                                company_element_fallback_button = WebDriverWait(item, SHORT_TIMEOUT).until(
+                                    EC.presence_of_element_located((By.XPATH, ".//div[@class='artdeco-entity-lockup__subtitle']//button[@class='entity-hovercard__a11y-trigger']"))
+                                )
+                                company = company_element_fallback_button.get_attribute('aria-label').replace('See more about ', '').strip()
+                                break
+                            except Exception as final_fallback_e:
+                                print(f"Lead {index+1}: Fallback company extraction (button aria-label) failed: {final_fallback_e}")
+                                company = "NA" # Keep NA if all fallbacks fail
+                        if company != "NA": # If any fallback succeeded, break
+                            break
+                    continue # Continue retry loop if not last attempt and no success
 
-            # --- Extract Location ---
-            try:
-                location_element = WebDriverWait(item, 10).until( # Explicit wait here!
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "span[data-anonymize='location']"))
-                )
-                location = location_element.text.strip()
-            except Exception as e:
-                print(f"Lead {index+1}: Location extraction failed: {e}")
-                location = "NA"
 
-            # Include the record even if key fields are missing.
-            if name == "NA" and profile_link == "NA":
-                print(f"Lead {index+1}: Both name and link are missing; including with defaults.")
+            # --- Extract Location with Retry (No Changes) ---
+            for retry in range(MAX_RETRIES):
+                try:
+                    location_element = WebDriverWait(item, SHORT_TIMEOUT).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "span[data-anonymize='location']"))
+                    )
+                    location = location_element.text.strip()
+                    break
+                except Exception as e:
+                    print(f"Lead {index+1}: Location extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries for location reached, using NA.")
+                        location = "NA"
 
             lead = {
                 "Name": name,
@@ -390,7 +404,7 @@ def scrape_leads(driver):
     except Exception as e:
         print(f"Error scraping leads: {e}")
         return leads_data
-    
+
 
 def save_leads_to_csv(leads, filename="leads_output.csv"):
     try:
@@ -436,5 +450,3 @@ def main_scrape_leads(session_id, driver, industry, job_title, seniority_level, 
 
 
     save_leads_to_csv(leads, filename=f"{session_id}.csv")
-
-
