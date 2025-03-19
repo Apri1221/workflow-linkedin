@@ -18,6 +18,7 @@ import logging
 import pandas as pd
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
+from service.info_service import scrape_contact_info, iterasi_csv  # Corrected import path
 
 
 
@@ -406,6 +407,7 @@ def scrape_leads(driver):
         return leads_data
 
 
+
 def save_leads_to_csv(leads, filename="leads_output.csv"):
     try:
         df = pd.DataFrame(leads)
@@ -414,6 +416,32 @@ def save_leads_to_csv(leads, filename="leads_output.csv"):
     except Exception as e:
         print(f"Error saving leads data to CSV: {e}")
 
+
+def iterasi_csv(session_id, driver): # ADD DRIVER ARGUMENT HERE
+    """
+    Iterates through profile links in a CSV, scrapes contact info for each, and saves to a new CSV.
+    """
+    leads_pro_data = [] # Initialize list to store enriched lead data
+    csv_filepath = f"{session_id}.csv" # Construct CSV filename dynamically
+
+    try:
+        DATA_FRAME1 = pd.read_csv(csv_filepath) # Use dynamic filename
+        LEAD_PROFILE_LINKS = DATA_FRAME1['Profile Link'].tolist()
+
+        for link in LEAD_PROFILE_LINKS:
+            contact_info = scrape_contact_info(session_id, driver) # Pass driver to scrape_contact_info
+            leads_pro_data.append(contact_info) # Append result to list
+
+        save_leads_to_csv(leads_pro_data, filename=f"{session_id}_leads_pro.csv") # Save enriched data
+        print(f"Enriched leads data saved to {session_id}_leads_pro.csv")
+        return leads_pro_data # Return the enriched data
+
+    except FileNotFoundError:
+        print(f"Error: Leads CSV file not found: {csv_filepath}")
+        return []
+    except Exception as e:
+        print(f"Error in iterasi_csv: {e}")
+        return []
 
 # -----------------------
 # Main Workflow
@@ -450,3 +478,10 @@ def main_scrape_leads(session_id, driver, industry, job_title, seniority_level, 
 
 
     save_leads_to_csv(leads, filename=f"{session_id}.csv")
+
+    # --- NEW: Call iterasi_csv from info_service ---
+    leads_pro_data = iterasi_csv(session_id, driver) # Pass driver instance
+    if leads_pro_data: # Check if we got enriched data back
+        save_leads_to_csv(leads_pro_data, filename=f"{session_id}_leads_pro.csv")
+    else:
+        print("No enriched leads data to save.")

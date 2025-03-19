@@ -9,6 +9,7 @@ import pyperclip
 
 
 
+
 socials_info_list = []
 emails_info_list = []
 website_info_list = []
@@ -20,17 +21,20 @@ linkedin_profile_list = []
 
 
 
-
-def scrape_contact_info(session_id):
-    with open("config.json", "r") as config_file:
-        config = json.load(config_file)
-
-    driver = configure_driver()
-
-    perform_login(driver, config)
-
-    DATA_FRAME = pd.read_csv(f"{session_id}.csv")
+def scrape_contact_info(session_id, driver): # Expect driver to be passed in
+    """
+    Scrapes contact info from LinkedIn profiles listed in a CSV file.
+    """
+    csv_filepath = f"{session_id}.csv"
+    DATA_FRAME = pd.read_csv(csv_filepath)
     LEAD_PROFILE_LINKS = DATA_FRAME['Profile Link'].tolist()
+
+    for lead_profile in LEAD_PROFILE_LINKS:
+        print(f"Getting lead info from: {lead_profile}")
+
+    # driver = configure_driver()
+
+    # perform_login(driver, config)
 
     for lead_profile in LEAD_PROFILE_LINKS:
         print(f"Getting lead info from: {lead_profile}") # More informative print
@@ -200,7 +204,7 @@ def scrape_contact_info(session_id):
 
     data = {
         'Name': DATA_FRAME['Name'].tolist(),
-        'Role': DATA_FRAME['Role'].tolist(),
+        'Role': DATA_FRAME['Title'].tolist(),
         'About': about_info_list,
         'Linkedin URL': linkedin_profile_list,
         'Phone(s)': phone_info_list,
@@ -208,11 +212,18 @@ def scrape_contact_info(session_id):
         'Website(s)': website_info_list,
         'Social(s)': socials_info_list,
         'Address(s)': address_info_list,
-        'Geography': DATA_FRAME['Geography'].tolist(),
-        'Date Added': DATA_FRAME['Date Added'].tolist(),
+        'Geography': DATA_FRAME['Location'].tolist(),
+        # 'Date Added': DATA_FRAME['Date Added'].tolist(),
         'Company': DATA_FRAME['Company'].tolist(),
-        'Company Linkedin URL': DATA_FRAME['Company Linkedin URL'].tolist(),
+        # 'Company Linkedin URL': DATA_FRAME['Company Linkedin URL'].tolist(),
     }
     df_about_updated = pd.DataFrame(data)
     df_about_updated.to_csv('scrape_output2.csv', index=False)
     print("Data saved to scrape_output2.csv") # Confirmation message
+
+
+def iterasi_csv(session_id, driver): # Expect driver to be passed in
+    scrape_contact_info(session_id, driver) # Call scrape_contact_info, pass driver
+    # iterasi_csv itself doesn't need to return anything in this flow, 
+    # scrape_contact_info saves the data directly
+    return None
