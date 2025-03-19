@@ -1,12 +1,16 @@
 import logging
-from fastapi import APIRouter, Header, Depends
+from fastapi import APIRouter, Header, Depends, HTTPException
 from utils.constant import ConstantsTask
-from schema.dto.request.index import CommonHeaders
+from schema.dto.request.index import SearchLeadRequest, CommonHeaders
 from schema.dto.response.index import TaskResponse, DataTask
 import asyncio
 import globals
 from typing import Annotated
-from service.leads_service import start_search_leads_task, start_fetch_lead_data_task
+from service.leads_service import start_search_leads_task
+from service.login_linkedin import login_to_linkedin  
+from service.login_linkedin import active_sessions
+
+
 
 
 # ------------- configuration
@@ -50,6 +54,55 @@ async def initial_task(
     }
 
 
+@router.post("/login-linkedin")
+async def linkedin_login_endpoint(  # Renamed to avoid conflict with imported function
+    header: CommonHeaders = Depends(common_headers_dependency)
+):
+    """API Endpoint to log into LinkedIn and keep the session open."""
+    session_id = header.sessionId
+
+    logger.info(f"--- /login-linkedin endpoint START ---") # Added start log
+    logger.info(f"/login-linkedin: Received session_id from header: {session_id}") # Log received session_id
+
+    async with state_lock:
+        data = globals.global_state.get(session_id)
+        if not data:
+            logger.info(f"/login-linkedin: Session data NOT found for session_id: {session_id} in global_state (this is expected on first login).")
+            data = {} # Initialize data if not found
+            globals.global_state[session_id] = data # Ensure session_id entry exists
+        else:
+            logger.info(f"/login-linkedin: Session data FOUND for session_id: {session_id} in global_state.")
+
+
+        try:
+            login_success = await login_to_linkedin(session_id)
+            if not login_success:
+                raise HTTPException(status_code=500, detail="Failed to log in to LinkedIn")
+        except Exception as e:
+            logger.error(f"/login-linkedin: LinkedIn login error for session {session_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"LinkedIn login failed: {e}")
+
+        data["authenticated"] = True  # Mark session as authenticated
+
+        # Explicitly store driver in global_state (redundant, but for extra check)
+        data["selenium_driver"] = active_sessions.get(session_id, {}).get("driver") # Get driver from active_sessions (where login stores it) and put in global_state
+        globals.global_state[session_id] = data # Update global_state again
+
+        logger.info(f"/login-linkedin: LinkedIn login successful for session_id: {session_id}. Driver stored in global_state.")
+        logger.info(f"/login-linkedin: Current globals.global_state contents: {globals.global_state}") # Log the ENTIRE global_state after login
+        logger.info(f"--- /login-linkedin endpoint END ---") # Added end log
+
+
+    return {
+        "success": True,
+        "message": "LinkedIn login successful",
+        "sessionId": session_id
+    }
+
+
+
+
+
 @router.post("/create-lead-filters", response_model=TaskResponse)
 async def create_lead_filters(
     header: CommonHeaders = Depends(common_headers_dependency)
@@ -84,16 +137,32 @@ async def search_leads(
     header: CommonHeaders = Depends(common_headers_dependency)
 ):
     session_id = header.sessionId
-    current_task = ConstantsTask.CREATE_LEAD_FILTERS
-    next_task = ConstantsTask.SEARCH_LEADS
+    current_task = ConstantsTask.CREATE_LEAD_FILTERS # Or should this be SEARCH_LEADS?
+    next_task = ConstantsTask.SEARCH_LEADS # Or next task after search?
     async with state_lock:
         data = globals.global_state.get(session_id)
         if not data:
-            raise Exception("Session not found")
+            logger.warning(f"/search-leads: Session data NOT found for session_id: {session_id} in global_state.")
+            raise HTTPException(status_code=400, detail="Session not found")
         if data["next_task"] != current_task:
-            raise Exception("Invalid task order")
-        
-        start_search_leads_task(session_id, data)
+            raise HTTPException(status_code=400, detail="Invalid task order")
+
+        # Log before retrieval attempt
+        logger.info(f"/search-leads: Attempting to retrieve driver for session_id: {session_id} from global_state...")
+
+        # **Get the driver from global_state**
+        driver = globals.global_state[session_id].get("selenium_driver")
+        if not driver:
+            logger.warning(f"/search-leads: No active Selenium session found for session_id: {session_id} in global_state. Login required.") # Log warning if not found
+            logger.warning(f"/search-leads: globals.global_state contents at retrieval failure: {globals.global_state}") # Log global_state at failure
+            raise HTTPException(status_code=500, detail="No active Selenium session found. Login required.")
+
+        logger.info(f"/search-leads: Driver successfully retrieved for session_id: {session_id} in /search-leads endpoint.") # Log success
+        logger.info(f"/search-leads: globals.global_state contents AFTER successful retrieval: {globals.global_state}") # Log global_state after retrieval
+        logger.info(f"--- /search-leads endpoint END ---") # Added end log
+
+
+        start_search_leads_task(session_id, data, driver=driver) # **Pass driver to task function**
         return {
             "success": True,
             "data": DataTask(
@@ -107,33 +176,3 @@ async def search_leads(
                 }
             )
         }
-
-
-@router.post("/fetch-lead-data", response_model=TaskResponse)
-async def search_leads(
-    header: CommonHeaders = Depends(common_headers_dependency)
-):
-    session_id = header.sessionId
-    current_task = ConstantsTask.SEARCH_LEADS
-    next_task = ConstantsTask.ANALYZE_LEAD_DATA
-    # async with state_lock:
-    #     data = globals.global_state.get(session_id)
-    #     if not data:
-    #         raise Exception("Session not found")
-    #     if data["next_task"] != current_task:
-    #         raise Exception("Invalid task order")
-        
-    start_fetch_lead_data_task(session_id)
-    return {
-        "success": True,
-        "data": DataTask(
-            results = [],
-            state = {
-                "sessionId": session_id
-            },
-            next = {
-                "task": next_task,
-                "payload": None
-            }
-        )
-    }

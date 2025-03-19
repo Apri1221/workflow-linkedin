@@ -1,8 +1,10 @@
 from schema.entity.leads_summary import LeadsSummaryTable
 from schema.entity.column import Column
 import asyncio
-from .nav4 import main_scrape_leads
-from .info_service import scrape_contact_info
+from .nav4 import scraping_leads
+from selenium import webdriver # Import webdriver for type hinting
+
+
 
 
 job_status_dict = {}
@@ -41,30 +43,38 @@ def checkSession():
     return platforms
 
 
-def start_search_leads_task(session_id, data):
+def start_search_leads_task(session_id: str, data: dict, driver: webdriver.Chrome):
     job_status_dict[session_id] = None
-    asyncio.create_task(search_leads(session_id=session_id, data=data))
+    asyncio.create_task(search_leads(session_id=session_id, data=data, driver=driver))    
     return session_id
 
 
-async def search_leads(session_id, data):
-    main_scrape_leads(
-        session_id, 
-        data["payload"]["industry"], 
-        data["payload"]["jobTitle"], 
-        data["payload"]["seniorityLevel"], 
-        data["payload"]["yearsOfExperience"]
-    )
-    
-    job_status_dict[session_id] = None
+async def search_leads(session_id: str, data: dict, driver: webdriver.Chrome): # driver is ALREADY passed to search_leads
+    """
+    Performs the lead search and scraping.
+
+    Args:
+        session_id: The session ID.
+        data: Task-specific data.
+        driver: The Selenium WebDriver instance (passed from start_search_leads_task).
+    """
+
+    try:
+        scraping_leads(
+            driver=driver,  # Pass the driver object as the FIRST argument!
+            session_id=session_id,
+            candidate_industry=data["payload"]["industry"],
+            candidate_job_title=data["payload"]["jobTitle"],
+            candidate_seniority_level=data["payload"]["seniorityLevel"],
+            candidate_years_experience=data["payload"]["yearsOfExperience"]
+        )
+        job_status_dict[session_id] = None
+
+    except Exception as e:
+        job_status_dict[session_id] = "Error" # Set job status to error
+        raise  # Re-raise exception to be handled by endpoint
 
     return {
         "sessionId": session_id,
         "data": None  # untuk di donwload
     }
-
-
-def start_fetch_lead_data_task(session_id):
-    job_status_dict[session_id] = None
-    asyncio.create_task(scrape_contact_info(session_id=session_id))
-    return session_id

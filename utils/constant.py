@@ -10,14 +10,15 @@ class ConstantsTask:
     ANALYZE_LEAD_DATA = "analyze-profile-data"
 
 class SeniorityLevel:
-    ENTRY = "Entry-level positions"
-    SENIOR = "Experienced Manager"
+    ENTRY = "Entry Level"
+    SENIOR = "Experienced professionals"
     MANAGER = "Mid-level management"
     DIRECTOR = "Senior management"
     VP = "Vice Presidents"
     CX    = "C-level executives (e.g., CEO, CFO)"
     PARTNER = "Business partners"
     OWNER = "Business owners"
+    CXO = "CXO"
 
 class YearsOfExperience:
     LESS_THAN_ONE_YEAR = "Less than 1 year"
