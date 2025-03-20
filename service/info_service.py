@@ -1,13 +1,14 @@
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from service.util_service import perform_login, configure_driver, close_overlay_if_present
+from service.util_service import close_overlay_if_present
 import json
 import traceback
 import pandas as pd
 import pyperclip
+import logging
 
-
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 socials_info_list = []
@@ -27,23 +28,29 @@ def scrape_contact_info(session_id, driver): # Expect driver to be passed in
     DATA_FRAME = pd.read_csv(csv_filepath)
     LEAD_PROFILE_LINKS = DATA_FRAME['Profile Link'].tolist()
 
+    linkedin_profile_list = [] # Initialize lists *outside* the loop
+    socials_info_list = []
+    emails_info_list = []
+    website_info_list = []
+    about_info_list = []
+    address_info_list = []
+    phone_info_list = []
+
+
     for lead_profile in LEAD_PROFILE_LINKS:
         print(f"Getting lead info from: {lead_profile}")
-
-    # driver = configure_driver()
-
-    # perform_login(driver, config)
-
-    for lead_profile in LEAD_PROFILE_LINKS:
-        print(f"Getting lead info from: {lead_profile}") # More informative print
         try:
             driver.get(lead_profile)
             close_overlay_if_present(driver)
             # Wait for page to load, check for a specific element that indicates page is ready
             WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'button[data-x--lead-actions-bar-overflow-menu][aria-label="Open actions overflow menu"]'))) # Wait for action menu button to load
+            profile_load_success = True # Flag to track successful profile load
         except Exception as e:
             print(f"Error loading profile page: {lead_profile}")
             print(traceback.format_exc()) # Print full traceback for debugging
+            profile_load_success = False # Flag profile load failure
+
+        if not profile_load_success: # Conditionally append based on load success
             linkedin_profile_list.append("NULL") # Still append NULL to keep lists consistent
             socials_info_list.append("NULL")
             emails_info_list.append("NULL")
@@ -51,7 +58,6 @@ def scrape_contact_info(session_id, driver): # Expect driver to be passed in
             address_info_list.append("NULL")
             phone_info_list.append("NULL")
             about_info_list.append("NULL")
-            # company_linkedin_list.append("NULL")
             continue # Skip to the next profile if page load fails
 
         # Extract Lead Linkedin link
@@ -201,6 +207,21 @@ def scrape_contact_info(session_id, driver): # Expect driver to be passed in
             about_info_list.append("NULL")
 
 
+    # --- Logging of list lengths ---
+    logging.info(f"scrape_contact_info: Length of DATA_FRAME['Name']: {len(DATA_FRAME['Name'].tolist())}")
+    logging.info(f"scrape_contact_info: Length of about_info_list: {len(about_info_list)}")
+    logging.info(f"scrape_contact_info: Length of linkedin_profile_list: {len(linkedin_profile_list)}")
+    logging.info(f"scrape_contact_info: Length of phone_info_list: {len(phone_info_list)}")
+    logging.info(f"scrape_contact_info: Length of emails_info_list: {len(emails_info_list)}")
+    logging.info(f"scrape_contact_info: Length of website_info_list: {len(website_info_list)}")
+    logging.info(f"scrape_contact_info: Length of socials_info_list: {len(socials_info_list)}")
+    logging.info(f"scrape_contact_info: Length of address_info_list: {len(address_info_list)}")
+    logging.info(f"scrape_contact_info: Length of DATA_FRAME['Title']: {len(DATA_FRAME['Title'].tolist())}")
+    logging.info(f"scrape_contact_info: Length of DATA_FRAME['Location']: {len(DATA_FRAME['Location'].tolist())}")
+    logging.info(f"scrape_contact_info: Length of DATA_FRAME['Company']: {len(DATA_FRAME['Company'].tolist())}")
+    logging.info(f"scrape_contact_info: Length of DATA_FRAME['Company Link']: {len(DATA_FRAME['Company Link'].tolist())}")
+
+
     data = {
         'Name': DATA_FRAME['Name'].tolist(),
         'Role': DATA_FRAME['Title'].tolist(),
@@ -214,15 +235,20 @@ def scrape_contact_info(session_id, driver): # Expect driver to be passed in
         'Geography': DATA_FRAME['Location'].tolist(),
         # 'Date Added': DATA_FRAME['Date Added'].tolist(),
         'Company': DATA_FRAME['Company'].tolist(),
-        'Company Linkedin URL': DATA_FRAME['Company Link'].tolist(),
+        'Company Link': DATA_FRAME['Company Link'].tolist(),
     }
     df_about_updated = pd.DataFrame(data)
     df_about_updated.to_csv('scrape_output2.csv', index=False)
     print("Data saved to scrape_output2.csv") # Confirmation message
 
 
-def iterasi_csv(session_id, driver): # Expect driver to be passed in
-    scrape_contact_info(session_id, driver) # Call scrape_contact_info, pass driver
-    # iterasi_csv itself doesn't need to return anything in this flow, 
-    # scrape_contact_info saves the data directly
-    return None
+def iterasi_csv(session_id, driver):
+    # Process all profiles at once
+    scrape_contact_info(session_id, driver)
+    # Now, read the enriched CSV if needed (or simply return an indication that it finished)
+    try:
+        enriched_df = pd.read_csv('scrape_output2.csv')
+        return enriched_df.to_dict(orient='records')
+    except Exception as e:
+        logging.error(f"Error reading enriched CSV: {e}")
+        return None
