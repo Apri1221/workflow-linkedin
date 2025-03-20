@@ -273,8 +273,9 @@ def scrape_leads(driver):
             name = "NA"
             title = "NA"
             profile_link = "NA"
-            company = "NA"
             location = "NA"
+            company = "NA"
+            company_link ="NA"
 
             # --- Extract Name with Retry (No Changes) ---
             for retry in range(MAX_RETRIES):
@@ -376,7 +377,7 @@ def scrape_leads(driver):
                     continue # Continue retry loop if not last attempt and no success
 
 
-            # --- Extract Location with Retry (No Changes) ---
+            # --- Extract Location with Retry ---
             for retry in range(MAX_RETRIES):
                 try:
                     location_element = WebDriverWait(item, SHORT_TIMEOUT).until(
@@ -390,12 +391,31 @@ def scrape_leads(driver):
                         print(f"Lead {index+1}: Max retries for location reached, using NA.")
                         location = "NA"
 
+            # --- Extract Company Link with Retry ---
+            for retry in range(MAX_RETRIES):
+                try:
+                    # Updated primary extraction: target the <a> tag directly
+                    company_link_element = WebDriverWait(item, SHORT_TIMEOUT).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='company-name']"))
+                    )
+                    company_link = company_link_element.get_attribute("href")
+                    if company_link.startswith("/"):
+                        company_link = "https://www.linkedin.com" + company_link
+                    break  # Exit loop if successful
+                except Exception as e:
+                    print(f"Lead {index+1}: Company link extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries reached, using fallback.")
+                        company_link = "NA"
+
+
             lead = {
                 "Name": name,
                 "Title": title,
                 "Profile Link": profile_link,
+                "Location": location,
                 "Company": company,
-                "Location": location
+                "Company Link": company_link
             }
             print(f"Lead {index+1} extracted: {lead}")
             leads_data.append(lead)

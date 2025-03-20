@@ -5,6 +5,7 @@ from .nav4 import main_scrape_leads
 from .info_service import scrape_contact_info
 from selenium import webdriver
 
+# ini untuk iterasi akhir
 
 job_status_dict = {}
 

@@ -19,8 +19,6 @@ phone_info_list = []
 linkedin_profile_list = []
 
 
-
-
 def scrape_contact_info(session_id, driver): # Expect driver to be passed in
     """
     Scrapes contact info from LinkedIn profiles listed in a CSV file.
@@ -53,6 +51,7 @@ def scrape_contact_info(session_id, driver): # Expect driver to be passed in
             address_info_list.append("NULL")
             phone_info_list.append("NULL")
             about_info_list.append("NULL")
+            # company_linkedin_list.append("NULL")
             continue # Skip to the next profile if page load fails
 
         # Extract Lead Linkedin link
@@ -215,7 +214,7 @@ def scrape_contact_info(session_id, driver): # Expect driver to be passed in
         'Geography': DATA_FRAME['Location'].tolist(),
         # 'Date Added': DATA_FRAME['Date Added'].tolist(),
         'Company': DATA_FRAME['Company'].tolist(),
-        # 'Company Linkedin URL': DATA_FRAME['Company Linkedin URL'].tolist(),
+        'Company Linkedin URL': DATA_FRAME['Company Link'].tolist(),
     }
     df_about_updated = pd.DataFrame(data)
     df_about_updated.to_csv('scrape_output2.csv', index=False)
