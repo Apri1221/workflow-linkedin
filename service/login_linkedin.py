@@ -108,11 +108,11 @@ async def login_to_linkedin(session_id: str, chrome_version: str = None) -> bool
         # Store driver in session dictionary
         active_sessions[session_id] = {
             "driver": driver,
-            "session_url": driver.command_executor._url,
+            "session_url": None,
             "session_id": driver.session_id
         }
 
-        logging.info(f"Session URL: {driver.command_executor._url}")
+        logging.info(f"Session URL: {driver}")
         logging.info(f"Session ID: {driver.session_id}")
         return True
 

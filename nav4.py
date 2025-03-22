@@ -306,26 +306,6 @@ def classify_candidate_seniority_level(parsed_data):
     return candidate_seniority_level
 
 
-def close_overlay_if_present(driver):
-    """Closes any potential overlay/modal that might be intercepting clicks."""
-    try:
-        overlay = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div._scrim_1onvtb._dialog_1onvtb._visible_1onvtb._topLayer_1onvtb"))
-        )
-        print("Overlay detected.")
-        try:
-            close_button = overlay.find_element(By.CSS_SELECTOR, "button.artdeco-modal__dismiss") # Example close button selector, adjust if needed
-            close_button.click()
-            print("Overlay close button clicked.")
-        except NoSuchElementException:
-            print("No close button found on overlay, trying to click outside.")
-            webdriver.ActionChains(driver).move_by_offset(0, 0).click().perform() # Click at (0,0) to dismiss if overlay allows
-        WebDriverWait(driver, 5).until(EC.invisibility_of_element(overlay)) # Wait for overlay to disappear
-        print("Overlay should be closed now.")
-    except TimeoutException:
-        print("No overlay detected.")
-        pass # No overlay, continue
-
 def apply_function_filter(driver, candidate_function, candidate_seniority_level):
 
     driver.get("https://www.linkedin.com/sales/search/people?viewAllFilters=true")

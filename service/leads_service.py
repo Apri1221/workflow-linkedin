@@ -3,6 +3,7 @@ from schema.entity.column import Column
 import asyncio
 from .nav4 import main_scrape_leads
 from .info_service import scrape_contact_info
+from .util_service import get_cookies
 from selenium import webdriver
 
 # ini untuk iterasi akhir
@@ -31,7 +32,7 @@ def init():
         "layout": layout
     }
 
-def checkSession():
+def check_session():
     platforms = []
     data = {
         "key": "linkedin_sales_nav",
@@ -40,7 +41,9 @@ def checkSession():
         "timeout": 300000
     }
     platforms.append(data)
-    return platforms
+
+    cookies = get_cookies()
+    return cookies
 
 
 def start_search_leads_task(session_id: str, data: dict, driver: webdriver.Chrome):

@@ -54,50 +54,45 @@ async def initial_task(
     }
 
 
-@router.post("/login-linkedin")
-async def linkedin_login_endpoint(  # Renamed to avoid conflict with imported function
-    header: CommonHeaders = Depends(common_headers_dependency)
-):
-    """API Endpoint to log into LinkedIn and keep the session open."""
-    session_id = header.sessionId
+# @router.post("/login-linkedin")
+# async def linkedin_login_endpoint(  # Renamed to avoid conflict with imported function
+#     header: CommonHeaders = Depends(common_headers_dependency)
+# ):
+#     """API Endpoint to log into LinkedIn and keep the session open."""
+#     session_id = header.sessionId
 
-    logger.info(f"--- /login-linkedin endpoint START ---") # Added start log
-    logger.info(f"/login-linkedin: Received session_id from header: {session_id}") # Log received session_id
+#     logger.info(f"--- /login-linkedin endpoint START ---") # Added start log
+#     logger.info(f"/login-linkedin: Received session_id from header: {session_id}") # Log received session_id
 
-    async with state_lock:
-        data = globals.global_state.get(session_id)
-        if not data:
-            logger.info(f"/login-linkedin: Session data NOT found for session_id: {session_id} in global_state (this is expected on first login).")
-            data = {} # Initialize data if not found
-            globals.global_state[session_id] = data # Ensure session_id entry exists
-        else:
-            logger.info(f"/login-linkedin: Session data FOUND for session_id: {session_id} in global_state.")
-
-
-        try:
-            login_success = await login_to_linkedin(session_id)
-            if not login_success:
-                raise HTTPException(status_code=500, detail="Failed to log in to LinkedIn")
-        except Exception as e:
-            logger.error(f"/login-linkedin: LinkedIn login error for session {session_id}: {e}")
-            raise HTTPException(status_code=500, detail=f"LinkedIn login failed: {e}")
-
-        data["authenticated"] = True  # Mark session as authenticated
-
-        # Explicitly store driver in global_state (redundant, but for extra check)
-        data["selenium_driver"] = active_sessions.get(session_id, {}).get("driver") # Get driver from active_sessions (where login stores it) and put in global_state
-        globals.global_state[session_id] = data # Update global_state again
-
-        logger.info(f"/login-linkedin: LinkedIn login successful for session_id: {session_id}. Driver stored in global_state.")
-        logger.info(f"/login-linkedin: Current globals.global_state contents: {globals.global_state}") # Log the ENTIRE global_state after login
-        logger.info(f"--- /login-linkedin endpoint END ---") # Added end log
+#     async with state_lock:
+#         data = globals.global_state.get(session_id)
+#         if not data:
+#             logger.info(f"/login-linkedin: Session data NOT found for session_id: {session_id} in global_state (this is expected on first login).")
+#             data = {} # Initialize data if not found
+#             globals.global_state[session_id] = data # Ensure session_id entry exists
+#         else:
+#             logger.info(f"/login-linkedin: Session data FOUND for session_id: {session_id} in global_state.")
 
 
-    return {
-        "success": True,
-        "message": "LinkedIn login successful",
-        "sessionId": session_id
-    }
+#         try:
+#             login_success = await login_to_linkedin(session_id)
+#             if not login_success:
+#                 raise HTTPException(status_code=500, detail="Failed to log in to LinkedIn")
+#         except Exception as e:
+#             logger.error(f"/login-linkedin: LinkedIn login error for session {session_id}: {e}")
+#             raise HTTPException(status_code=500, detail=f"LinkedIn login failed: {e}")
+
+#         data["authenticated"] = True  # Mark session as authenticated
+
+#         # Explicitly store driver in global_state (redundant, but for extra check)
+#         data["selenium_driver"] = active_sessions.get(session_id, {}).get("driver") # Get driver from active_sessions (where login stores it) and put in global_state
+#         globals.global_state[session_id] = data # Update global_state again
+
+#     return {
+#         "success": True,
+#         "message": "LinkedIn login successful",
+#         "sessionId": session_id
+#     }
 
 
 
@@ -116,6 +111,14 @@ async def create_lead_filters(
             raise Exception("Session not found")
         if data["next_task"] != current_task:
             raise Exception("Invalid task order")
+        
+        try:
+            login_success = await login_to_linkedin(session_id)
+            if not login_success:
+                raise HTTPException(status_code=500, detail="Failed to log in to LinkedIn")
+        except Exception as e:
+            logger.error(f"LinkedIn login error for session {session_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"LinkedIn login failed: {e}")
         
         return {
             "success": True,

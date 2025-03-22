@@ -12,12 +12,14 @@ from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
 import time
 import datetime
+import requests
 
 
 
 WAIT_TIMEOUT = 30
 SHORT_TIMEOUT = 10
 MAX_RETRIES = 3
+base_url = "https://asia-southeast1-boringai-staging.cloudfunctions.net"
 
 
 
@@ -61,20 +63,50 @@ def configure_driver(headless=False):
 
 
 def close_overlay_if_present(driver):
-    """Closes any overlay or modal that might be obstructing interaction."""
+    """Closes any potential overlay/modal that might be intercepting clicks."""
     try:
         overlay = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "div._scrim_1onvtb._dialog_1onvtb._visible_1onvtb._topLayer_1onvtb"))
         )
         print("Overlay detected.")
         try:
-            close_button = overlay.find_element(By.CSS_SELECTOR, "button.artdeco-modal__dismiss")
+            close_button = overlay.find_element(By.CSS_SELECTOR, "button.artdeco-modal__dismiss") # Example close button selector, adjust if needed
             close_button.click()
-            print("Overlay dismissed via close button.")
+            print("Overlay close button clicked.")
         except NoSuchElementException:
-            webdriver.ActionChains(driver).move_by_offset(0, 0).click().perform()
-            print("Overlay dismissed via outside click.")
-        WebDriverWait(driver, 5).until(EC.invisibility_of_element(overlay))
+            print("No close button found on overlay, trying to click outside.")
+            webdriver.ActionChains(driver).move_by_offset(0, 0).click().perform() # Click at (0,0) to dismiss if overlay allows
+        WebDriverWait(driver, 5).until(EC.invisibility_of_element(overlay)) # Wait for overlay to disappear
+        print("Overlay should be closed now.")
     except TimeoutException:
-        # No overlay found
-        pass
+        print("No overlay detected.")
+        pass # No overlay, continue
+
+
+
+def launch_browser():
+    """Start a new remote browser session"""
+    url = f"{base_url}/remote-browser-allocate"
+    payload = {
+        "userId": "1703",
+        "startUrl": "https://www.linkedin.com/sales/search/people?viewAllFilters=true",
+        "timeout": 600000
+    }
+    
+    response = requests.post(url, json=payload)
+    if not response.json().get('success'):
+        raise ConnectionError("Failed to launch browser")
+        
+    browser_session = response.json()['data']
+    return browser_session['url']
+
+
+def get_cookies():
+    url = f"{base_url}/remote-browser-cookies"
+    payload = {"userId": "1703"}
+    
+    response = requests.post(url, json=payload)
+    if not response.json().get('success'):
+        raise ConnectionError("Failed to fetch cookies")
+        
+    return response.json()['data']
