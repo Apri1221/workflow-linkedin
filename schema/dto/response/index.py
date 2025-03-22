@@ -23,7 +23,7 @@ class DataTask(BaseSchema):
     next: dict | None = None
 
 class DataSetup(BaseSchema):
-    platforms: List[dict]
+    platforms: List[dict] | None = None
     result: dict
     state: dict | None = None
 

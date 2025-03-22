@@ -5,675 +5,376 @@ import os
 import time
 import random
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from groq import Groq
 from dotenv import load_dotenv
+from fuzzywuzzy import process
 from utils.constant import StaticValue
-
-
-
-
-SELECTORS = {
-    'login_email': (By.NAME, "session_key"),
-    'login_password': (By.NAME, "session_password"),
-    'experience_section': (By.CSS_SELECTOR, "#experience-section"),
-    'lead_items': (By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3"),
-    'profile_link': (By.CSS_SELECTOR, "a[data-anonymize='person-name']"),
-}
+from service.util_service import perform_login, configure_driver, close_overlay_if_present
+from openai import OpenAI
+import logging
+import pandas as pd
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
+from service.info_service import scrape_contact_info, iterasi_csv
+from service.company_service import company_info
+import traceback
 
 WAIT_TIMEOUT = 30
 SHORT_TIMEOUT = 10
 MAX_RETRIES = 3
+YEAR_EXPERIENCE = ["Less than 1 year", "1 to 2 years", "3 to 5 years", "6 to 10 years", "More than 10 years"]
 
-# -------------------------------
-# Utility Functions
+def get_closest_match(extracted_value, options_list, score_cutoff=80):
+    print(f"get_closest_match called with extracted_value: {extracted_value}, type: {type(extracted_value)}")
+    if extracted_value is None:
+        return None
+    extracted_value_str = str(extracted_value)
+    print(f"After str() conversion, extracted_value_str: {extracted_value_str}, type: {type(extracted_value_str)}")
+    print(f"Options list (YEAR_EXPERIENCE): {options_list}")
+    best_match_tuple = process.extractOne(extracted_value_str, options_list)
+    if best_match_tuple:
+        best_match, score = best_match_tuple
+        print(f"fuzzywuzzy result: best_match: {best_match}, score: {score}")
+        if score >= score_cutoff:
+            return best_match
+    return None
 
-def write_results_to_csv(results, session_id):
-    """Write scraped results to CSV with a timestamp in the filename."""
-    filename_with_timestamp = f"{session_id}.csv"
-    print(f"Writing results to CSV: {filename_with_timestamp}")
-
-    with open(filename_with_timestamp, "w", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow(["person_name", "person_title", "linkedin_profile_link", "company_name", "location", "job_title_1", "job_title_2", "company_name_1", "company_name_2", "company_description_1", "company_description_2", "email"])
-        for result in results:
-            writer.writerow([
-                result.get("person_name", "NA"),
-                result.get("person_title", "NA"),
-                result.get("linkedin_profile_link", "NA"),
-                result.get("company_name", "NA"),
-                result.get("location", "NA"),
-                result.get("job_title_1", "NA"),
-                result.get("job_title_2", "NA"),
-                result.get("company_name_1", "NA"),
-                result.get("company_name_2", "NA"),
-                result.get("company_description_1", "NA"),
-                result.get("company_description_2", "NA"),
-                result.get("email", "NA"),
-            ])
-    print(f"Results written to {filename_with_timestamp}")
-
-
-def get_linkedin_profile_details(driver, profile_url, session_id):
-    job_titles = ["NA", "NA"]
-    company_names = ["NA", "NA"]
-    company_descriptions = ["NA", "NA"]
-    email = "NA"
-
+def llm_analyze_criteria(criteria_text):
+    prompt = ("Analyze the following candidate criteria text and determine which of the following 'good-to-have' criteria are applicable:\n"
+              "1. Experience in facilities procurement\n"
+              "2. Interest in waste management and circular economy\n"
+              "3. Knowledge of sustainability practices\n\n"
+              "Candidate criteria text:\n"
+              f"\"{criteria_text}\"\n\n"
+              "Return a JSON object with a key 'good_to_have' whose value is a list of the applicable criteria (choose from the above three) based on your analysis. "
+              "Do not include any extra text.")
+    load_dotenv()
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    response = client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="gpt-4o")
+    raw_output = response.choices[0].message.content
+    logging.info(f"Raw LLM Good-to-Have Output: {raw_output}")
     try:
-        print(f"Loading profile page: {profile_url}")
-        driver.get(profile_url)
-        WebDriverWait(driver, 30).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "#experience-section")),
-            f"Timeout waiting for experience section on profile page: {profile_url}"
-        )
-        print(f"Profile page loaded and experience section found: {profile_url}")
-    except Exception as e_load:
-        print(f"Error loading profile page {profile_url}: {e_load}")
-        error_filename = f"profile_page_source_error_load_{session_id}.html"
-        with open(error_filename, "w", encoding="utf-8") as file:
-            file.write(driver.page_source)
-        print(f"Profile page HTML saved to '{error_filename}' due to load error.")
-        return job_titles, company_names, company_descriptions, email
+        return json.loads(raw_output)
+    except Exception as e:
+        logging.error(f"Error parsing LLM output for good-to-have criteria: {e}")
+        return {"good_to_have": []}
 
+def apply_job_title_filter(driver, value):
+    print("Applying Job Title Filter...")
+    driver.get('https://www.linkedin.com/sales/search/people?viewAllFilters=true')
+    time.sleep(10)
+    job_title_fieldset = WebDriverWait(driver, 40).until(EC.element_to_be_clickable((By.XPATH, "//fieldset[@data-x-search-filter='CURRENT_TITLE']")))
+    driver.execute_script("arguments[0].scrollIntoView(true);", job_title_fieldset)
+    time.sleep(1)
+    job_title_fieldset.click()
+    job_title_input_xpath = "//fieldset[@data-x-search-filter='CURRENT_TITLE']//input[@type='text']"
+    job_title_input = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, job_title_input_xpath)))
+    job_title_input.send_keys(value)
+    print(f"Typed '{value}' into the job title filter input.")
+    time.sleep(1)
+    include_button_xpath = f'//div[@aria-label="Include “{value}” in Current job title filter"]'
     try:
-        experience_section = driver.find_element(By.CSS_SELECTOR, "#experience-section")
-        roles = experience_section.find_elements(By.CSS_SELECTOR, "li._experience-entry_1irc72")
-        print(f"Found {len(roles)} experience entries.")
-    except Exception as e_exp:
-        print(f"Error finding experience section or roles: {e_exp}")
-        error_filename = f"profile_page_source_no_exp_section_{session_id}.html"
-        with open(error_filename, "w", encoding="utf-8") as file:
-            file.write(driver.page_source)
-        print(f"Profile page HTML saved to '{error_filename}' due to experience section error.")
-        return job_titles, company_names, company_descriptions, email
+        include_button = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, include_button_xpath)))
+        include_button.click()
+        print(f"Clicked 'Include' for job title '{value}'.")
+        time.sleep(2)
+    except Exception as e:
+        print(f"Error clicking 'Include' button for job title: {e}")
 
-    processed = 0
-    for index, role in enumerate(roles):
-        if processed >= 2:
-            break
-        try:
-            try:
-                date_range_text = role.find_element(By.CSS_SELECTOR, ".FlFnZlIaBBqjmUkntQjGZaWDjaAiwAhClE").text.lower()
-                print(f"Role {index+1} date range: {date_range_text}")
-            except Exception:
-                print(f"Date range element not found for role {index+1}.")
-
-            try:
-                job_title_element = role.find_element(By.CSS_SELECTOR, "h2[data-anonymize='job-title']")
-                job_titles[processed] = job_title_element.text.strip() or "NA"
-            except Exception as e_job:
-                print(f"Job title not found for role {index+1}: {e_job}")
-                job_titles[processed] = "NA"
-
-            try:
-                company_name_element = role.find_element(By.CSS_SELECTOR, "p[data-anonymize='company-name']")
-                company_names[processed] = company_name_element.text.strip() or "NA"
-            except Exception as e_comp:
-                print(f"Company name not found for role {index+1}: {e_comp}")
-                company_names[processed] = "NA"
-
-            try:
-                company_desc_element = role.find_element(By.CSS_SELECTOR, "div[data-anonymize='person-blurb']")
-                company_descriptions[processed] = company_desc_element.text.strip() or "NA"
-            except Exception as e_desc:
-                print(f"Company description not found for role {index+1}: {e_desc}")
-                company_descriptions[processed] = "NA"
-
-            processed += 1
-        except Exception as inner:
-            print(f"Error processing role {index+1}: {inner}")
-            continue
-
-    return job_titles, company_names, company_descriptions, email
-
-
-
-def scroll_down_page(driver, scroll_pause_time=2):
-    """Scrolls down the page to load more content."""
-    print("Starting scroll down...")
-    last_height = driver.execute_script("return document.body.scrollHeight")
-    scrolls = 0
-    max_scrolls = 5
-
-    while scrolls < max_scrolls:
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(scroll_pause_time)
-        new_height = driver.execute_script("return document.body.scrollHeight")
-        if new_height == last_height:
-            print("Reached bottom of page or no new content loaded.")
-            break
-        last_height = new_height
-        scrolls += 1
-        print(f"Scrolled down, scroll count: {scrolls}")
-    print("Scrolling complete.")
-
-
-def close_overlay_if_present(driver):
-    """Closes any potential overlay/modal that might be intercepting clicks."""
+def apply_seniority_filter(driver, matched_seniority):
+    print(f"Applying Seniority Level Filter for: '{matched_seniority}'...")
+    seniority_fieldset_xpath = "//fieldset[@data-x-search-filter='SENIORITY_LEVEL']"
+    expand_seniority_button_xpath = "//fieldset[@data-x-search-filter='SENIORITY_LEVEL']//button[@aria-expanded='false'][.//span[contains(text(), 'Expand')]]"
+    include_seniority_button_xpath = f'//li[@role="option"]//div[@aria-label="Include “{matched_seniority}” in Seniority level filter"]'
     try:
-        overlay = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div._scrim_1onvtb._dialog_1onvtb._visible_1onvtb._topLayer_1onvtb"))
-        )
-        print("Overlay detected.")
-        try:
-            close_button = overlay.find_element(By.CSS_SELECTOR, "button.artdeco-modal__dismiss") # Example close button selector, adjust if needed
-            close_button.click()
-            print("Overlay close button clicked.")
-        except NoSuchElementException:
-            print("No close button found on overlay, trying to click outside.")
-            webdriver.ActionChains(driver).move_by_offset(0, 0).click().perform() # Click at (0,0) to dismiss if overlay allows
-        WebDriverWait(driver, 5).until(EC.invisibility_of_element(overlay)) # Wait for overlay to disappear
-        print("Overlay should be closed now.")
-    except TimeoutException:
-        print("No overlay detected.")
-        pass # No overlay, continue
+        seniority_fieldset = WebDriverWait(driver, 40).until(EC.element_to_be_clickable((By.XPATH, seniority_fieldset_xpath)))
+        driver.execute_script("arguments[0].scrollIntoView(true);", seniority_fieldset)
+        time.sleep(1)
+        seniority_fieldset.click()
+        expand_button = WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, expand_seniority_button_xpath)))
+        expand_button.click()
+        print("Clicked 'Expand' button for Seniority Level filter.")
+        time.sleep(2)
+        print(f"Attempting to find 'Include' button for matched seniority: '{matched_seniority}' using XPath: {include_seniority_button_xpath}")
+        include_button = WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, include_seniority_button_xpath)))
+        include_button.click()
+        print(f"Clicked 'Include' button for matched seniority level '{matched_seniority}'.")
+        time.sleep(2)
+    except Exception as e:
+        print(f"Error applying seniority level filter for '{matched_seniority}': {e}")
 
+def apply_industry_filter(driver, value):
+    print("Applying Industry Filter...")
+    industry = value
+    if not industry:
+        print("No industry extracted, skipping filter.\n")
+        return
+    industry_fieldset_xpath = "//fieldset[@data-x-search-filter='INDUSTRY']"
+    industry_input_xpath = "//fieldset[@data-x-search-filter='INDUSTRY']//input[@type='text']"
+    include_industry_button_xpath = f'//div[@aria-label="Include “{industry}” in Industry filter"]'
+    try:
+        industry_fieldset = WebDriverWait(driver, 40).until(EC.element_to_be_clickable((By.XPATH, industry_fieldset_xpath)))
+        driver.execute_script("arguments[0].scrollIntoView(true);", industry_fieldset)
+        time.sleep(1)
+        industry_fieldset.click()
+        industry_input = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, industry_input_xpath)))
+        industry_input.send_keys(industry)
+        print(f"Typed '{industry}' into the industry filter input.")
+        time.sleep(1)
+        include_button = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, include_industry_button_xpath)))
+        include_button.click()
+        print(f"Clicked 'Include' for industry '{industry}'.")
+        time.sleep(2)
+    except Exception as e:
+        print(f"Error applying industry filter: {e}")
+    print("Industry Filter Applied.\n")
 
+def apply_years_experience_filter(driver, matched_experience):
+    print(f"Applying Years of Experience Filter for: '{matched_experience}'...")
+    years_experience_fieldset_xpath = "//fieldset[@data-x-search-filter='YEARS_AT_CURRENT_COMPANY']"
+    years_experience_dropdown_list_xpath = '//ul[@role="listbox" and @aria-label="Years in current company filter suggestions"]'
+    years_experience_option_xpath = f'//li[@role="option" and contains(normalize-space(.), "{matched_experience}")]/div'
+    try:
+        fieldset = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, years_experience_fieldset_xpath)))
+        driver.execute_script("arguments[0].scrollIntoView(true);", fieldset)
+        time.sleep(1)
+        fieldset.click()
+        print("Waiting for Years of Experience dropdown list to be visible...")
+        dropdown_list = WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.XPATH, years_experience_dropdown_list_xpath)))
+        print("Dropdown list is visible.")
+        print(f"Searching for option element for '{matched_experience}' using XPath: {years_experience_option_xpath}")
+        option_element = WebDriverWait(driver, 60).until(EC.element_to_be_clickable((By.XPATH, years_experience_option_xpath)))
+        driver.execute_script("arguments[0].scrollIntoView(true);", option_element)
+        time.sleep(1)
+        option_element.click()
+        print(f"Clicked years of experience option: '{matched_experience}'.")
+        time.sleep(2)
+    except Exception as e:
+        print(f"Error applying years of experience filter: {e}")
+    print(f"Filter applied for: '{matched_experience}'.\n")
 
+def scroll_infinite_scroll_data_attribute(driver, scrollable_element=None, pause_time=10, max_attempts=15, initial_wait=5, step_wait=3):
+    """
+    Performs infinite scroll by repeatedly scrolling to elements with 'data-scroll-into-view' attribute.
+    """
+    if scrollable_element:
+        print("Infinite scroll using data-scroll-into-view within specified element...")
+    else:
+        print("Infinite scroll using data-scroll-into-view on document body...")
 
+    print(f"Waiting {initial_wait} seconds before starting data-attribute based infinite scroll...")
+    time.sleep(initial_wait)
 
+    attempts = 0
+    last_lead_count = 0
 
+    while attempts < max_attempts:
+        scroll_elements = driver.find_elements(By.CSS_SELECTOR, "[data-scroll-into-view]") # Find all elements with the attribute
+        current_lead_items = driver.find_elements(By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")
+        current_lead_count = len(current_lead_items)
+        print(f"Current lead count: {current_lead_count}")
 
+        if current_lead_count > last_lead_count:
+            print("New leads loaded.")
+            last_lead_count = current_lead_count
+            attempts = 0  # Reset attempts counter
 
+            if scroll_elements:
+                last_scroll_element = scroll_elements[-1] # Scroll to the very last element with the data attribute
+                driver.execute_script("arguments[0].scrollIntoView(true);", last_scroll_element)
+                print("Scrolled to the last data-scroll-into-view element.")
+            else:
+                print("No data-scroll-into-view elements found to scroll to.")
 
+        else:
+            attempts += 1
+            print(f"No new leads loaded, attempt {attempts}/{max_attempts}...")
+            if attempts >= max_attempts:
+                print("Stopping infinite scroll: Max attempts reached without new leads.")
+                break
 
-# -------------------------------
-# Scraping Main Workflow
-    
-def scrape_results_page(driver, session_id, max_leads=10):
-    total_results = []  # Accumulator for all scraped leads
-    page_number = 1
+        time.sleep(step_wait)
 
-    while True:
-        try:
-            # Close any modal if present.
-            try:
-                close_button = driver.find_element(By.CSS_SELECTOR, "button.close-modal")
-                close_button.click()
-                print("Closed modal")
-            except NoSuchElementException:
-                print("No modal found")
+    print("Infinite scroll using data-scroll-into-view completed.")
 
-            print(f"Waiting for leads list to load on page {page_number}...")
-            WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")),
-                f"Timeout waiting for lead items on page {page_number}"
-            )
-            print(f"Leads list found on page {page_number}")
-            time.sleep(5)  # Adjust if necessary
-
-            scroll_down_page(driver)
-            print("Scroll down on leads page completed.")
-
-            lead_items = driver.find_elements(By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")
-            print(f"Found {len(lead_items)} leads on page {page_number} after scroll down.")
-
-            for index, item in enumerate(lead_items):
-                if len(total_results) >= max_leads:
-                    print("Reached target number of leads. Stopping.")
-                    break  # Stop if we have reached the target number of leads
-
-                print(f"--- Starting to process lead index: {index} on page {page_number} ---")
-                person_name = "NA"
-                person_title = "NA"
-                linkedin_profile_link = "NA"
-                company_name = "NA"
-                location = "NA"
-
+def scrape_leads(driver):
+    print("Identifying search results container for scrolling...")
+    search_results_container = WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.ID, "search-results-container")))
+    print("Search results container found.")
+    scroll_infinite_scroll_data_attribute(driver, scrollable_element=search_results_container, pause_time=10, max_attempts=15, initial_wait=5, step_wait=3)
+    print("Waiting for lead items to be present after scrolling...")
+    WebDriverWait(driver, 30).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")))
+    print("Lead items found after scrolling.")
+    print("Finished scrolling. Now scraping leads...")
+    leads_data = []
+    try:
+        lead_items = driver.find_elements(By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")
+        print(f"Found {len(lead_items)} lead items on the page.")
+        for index, item in enumerate(lead_items):
+            name = "NA"
+            title = "NA"
+            profile_link = "NA"
+            location = "NA"
+            company = "NA"
+            company_link = "NA"
+            for retry in range(MAX_RETRIES):
                 try:
-                    driver.execute_script("arguments[0].scrollIntoView(false);", item)
-                    WebDriverWait(driver, 10).until(
-                        EC.visibility_of(item),
-                        f"Timeout waiting for lead item to be visible on page {page_number}, item {index+1}"
-                    )
-                    # Extract the person's name.
-                    try:
-                        name_element = item.find_element(By.CSS_SELECTOR, "span[data-anonymize='person-name']")
-                        person_name = name_element.text.strip() if name_element else "NA"
-                    except Exception as e:
-                        print(f"Error extracting name: {e}")
-
-                    # Extract the profile link.
-                    try:
-                        link_element = item.find_element(By.CSS_SELECTOR, "a[data-anonymize='person-name']")
-                        linkedin_profile_link = link_element.get_attribute("href") if link_element else "NA"
-                    except Exception as e:
-                        print(f"Error extracting profile link: {e}")
-
-                    # Extract the job title.
-                    try:
-                        title_element = item.find_element(By.CSS_SELECTOR, "span[data-anonymize='title']")
-                        person_title = title_element.text.strip() if title_element else "NA"
-                    except Exception as e:
-                        print(f"Error extracting title: {e}")
-
-                    # Extract the company name.
-                    try:
-                        company_element = item.find_element(By.CSS_SELECTOR, "a[data-anonymize='company-name']")
-                        company_name = company_element.text.strip() if company_element else "NA"
-                    except Exception as e:
-                        print(f"Error extracting company: {e}")
-
-                    # Extract the location.
-                    try:
-                        location_element = item.find_element(By.CSS_SELECTOR, "span[data-anonymize='location']")
-                        location = location_element.text.strip() if location_element else "NA"
-                    except Exception as e:
-                        print(f"Error extracting location: {e}")
-
-                    print(f"Processing: {person_name} on page {page_number}, item {index + 1}")
-
-                    # --- Click on the lead's name to go to the intermediate page ---
-                    try:
-                        person_name_element = item.find_element(By.CSS_SELECTOR, "span[data-anonymize='person-name']")
-                        person_name_element.click()
-                        print(f"Clicked on person name: {person_name}")
-                        intermediate_page_start_time = time.time() # Start timing intermediate page load
-
-                        intermediate_page_loaded = False
-                        intermediate_page_timeout = False
-                        while time.time() - intermediate_page_start_time < 60: # Wait max 60 seconds for intermediate page to load
-                            try:
-                                # Check for a specific element on the intermediate page to confirm load
-                                WebDriverWait(driver, 5).until(
-                                    EC.presence_of_element_located((By.CSS_SELECTOR, "a[aria-label='Open profile in new tab']")) # Example: Wait for the icon itself
-                                )
-                                intermediate_page_loaded = True
-                                print(f"Intermediate page loaded successfully for {person_name} after {(time.time() - intermediate_page_start_time):.2f} seconds.")
-                                break  # Exit the loop if the page is loaded
-                            except TimeoutException:
-                                print(f"Waiting for intermediate page to load for {person_name}...") # Log waiting attempts
-                                time.sleep(2) # Wait a bit longer before retrying
-                        else: # else block of while loop executes if loop completes without break
-                            intermediate_page_timeout = True # Indicate timeout
-
-                        if intermediate_page_timeout: # Check flag after loop
-                            raise TimeoutException(f"Timeout waiting for intermediate page to load for {person_name}")
-
-
-                        # --- Click "Open profile in new tab" icon on the intermediate page ---
-                        try:
-                            print(f"--- Attempting to find 'Open profile in new tab' icon on intermediate page for {person_name} ---") # Added log
-                            view_profile_icon_intermediate_page = WebDriverWait(driver, 60).until( # Increased timeout to 60 seconds
-                                EC.element_to_be_clickable((By.CSS_SELECTOR, "a[aria-label='Open profile in new tab']")) # Using aria-label from HTML snippet
-                            )
-                            print(f"--- 'Open profile in new tab' icon FOUND on intermediate page for {person_name} ---") # Log after wait success
-                            view_profile_icon_intermediate_page.click()
-                            print(f"Clicked 'Open profile in new tab' icon on intermediate page for {person_name}")
-                            time.sleep(5) # Wait for the actual profile page to load
-
-                            # --- Click "View profile" button (link with icon) on the profile page ---
-                            try:
-                                print(f"--- Attempting to find 'More actions' button (icon) on profile page for {person_name} ---") # Added log
-                                more_actions_button_profile_page = WebDriverWait(driver, 30).until( # Increased timeout
-                                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label*='See more actions for']")) # Generic selector
-                                )
-                                print(f"--- 'More actions' button (icon) FOUND on profile page for {person_name} ---")
-
-                                # --- Attempt 1: Direct click ---
-                                try:
-                                    more_actions_button_profile_page.click()
-                                    print(f"Clicked 'More actions' button (icon) on profile page using direct click for {person_name}")
-                                    time.sleep(1) # Wait for dropdown
-
-                                except ElementClickInterceptedException as eci_direct_click:
-                                    print(f"ElementClickInterceptedException on direct click for 'More actions' button (icon) for {person_name}: {eci_direct_click}")
-
-                                    # --- Attempt 2: JavaScript click ---
-                                    try:
-                                        driver.execute_script("arguments[0].click();", more_actions_button_profile_page)
-                                        print(f"Clicked 'More actions' button (icon) on profile page using JavaScript click for {person_name}")
-                                        time.sleep(1)  # Wait for dropdown
-                                    except Exception as js_click_e:
-                                        print(f"JavaScript click also failed for 'More actions' button (icon) for {person_name}: {js_click_e}")
-
-                                        # --- Attempt 3: ActionChains click ---
-                                        try:
-                                            actions = webdriver.ActionChains(driver)
-                                            actions.move_to_element(more_actions_button_profile_page).click().perform()
-                                            print(f"Clicked 'More actions' button (icon) on profile page using ActionChains for {person_name}")
-                                            time.sleep(1)  # Wait for dropdown
-                                        except Exception as action_click_e:
-                                            print(f"ActionChains click also failed for 'More actions' button (icon) for {person_name}: {action_click_e}")
-                                            raise # Re-raise the last exception to trigger timeout handling
-
-
-                                    # --- Find and click "View LinkedIn profile" link in the dropdown on profile page ---
-                                    try:
-                                        view_profile_link_profile_page = WebDriverWait(driver, 20).until(
-                                            EC.element_to_be_clickable((By.XPATH, "//div[contains(@aria-expanded, 'true') and contains(@aria-controls, 'hue-menu-')]//a[contains(text(), 'View LinkedIn profile')]")) # Reusing XPath
-                                        )
-                                        view_profile_link_profile_page.click()
-                                        print(f"Clicked 'View LinkedIn profile' link on profile page for {person_name}")
-                                        time.sleep(5) # Wait for profile details to load (though we are already on profile page)
-
-
-                                        # Now we are (again) on the actual profile page (after clicking "View LinkedIn profile" in dropdown - redundant step?)
-                                        job_titles, company_names_details, company_descriptions, email = get_linkedin_profile_details(driver, driver.current_url, session_id)
-                                        print(f"Back from get_linkedin_profile_details for {person_name}")
-                                        # No more driver.back() calls here as we are done with profile page scraping in this flow
-
-                                    except TimeoutException as dropdown_view_profile_timeout:
-                                        print(f"Timeout waiting for 'View LinkedIn profile' button (icon) on PROFILE page for {person_name}: {dropdown_view_profile_timeout}")
-                                        driver.back() # Go back to intermediate page
-                                        driver.back() # Go back to search results
-                                        print("Navigated back to search results due to timeout for 'View LinkedIn profile' button (icon) on PROFILE page.")
-                                    except NoSuchElementException as no_dropdown_view_profile_element:
-                                        print(f"Could not find 'View LinkedIn profile' button (icon) on PROFILE page for {person_name}: {no_dropdown_view_profile_element}")
-                                        driver.back() # Go back to intermediate page
-                                        driver.back() # Go back to search results
-                                        print("Navigated back to search results because 'View LinkedIn profile' button (icon) on PROFILE page not found.")
-
-
-                            except TimeoutException as more_actions_profile_timeout:
-                                print(f"Timeout waiting for 'More actions' button (icon) on PROFILE page for {person_name}: {more_actions_profile_timeout}")
-                                error_filename = f"profile_page_source_timeout_more_actions_profile_{session_id}.html" # Specific filename
-                                with open(error_filename, "w", encoding="utf-8") as file:
-                                    file.write(driver.page_source)
-                                print(f"Profile page HTML saved to '{error_filename}' due to timeout finding 'More actions' icon on PROFILE page.") # Specific log
-                                driver.save_screenshot(f"profile_page_screenshot_timeout_more_actions_profile_{session_id}.png") # Save screenshot as well
-                                driver.back() # Go back to search results
-                                print("Navigated back to search results due to timeout finding 'More actions' icon on PROFILE page.")
-                            except NoSuchElementException as no_more_actions_profile_element:
-                                print(f"Could not find 'More actions' button (icon) on PROFILE page for {person_name}: {no_more_actions_profile_element}")
-                                driver.back() # Go back to search results
-                                print("Navigated back to search results because 'More actions' icon on PROFILE page not found.")
-
-
-                        except TimeoutException as view_profile_icon_timeout:
-                            print(f"Timeout waiting for 'Open profile in new tab' icon on intermediate page for {person_name}: {view_profile_icon_timeout}")
-                            error_filename = f"intermediate_page_source_timeout_view_profile_icon_{session_id}.html" # Specific filename
-                            with open(error_filename, "w", encoding="utf-8") as file:
-                                file.write(driver.page_source)
-                            print(f"Intermediate page HTML saved to '{error_filename}' due to timeout finding 'Open profile in new tab' icon on intermediate page.") # Specific log
-                            driver.save_screenshot(f"intermediate_page_screenshot_timeout_view_profile_icon_{session_id}.png") # Save screenshot
-                            driver.back() # Go back to search results
-                            print("Navigated back to search results due to timeout for 'Open profile in new tab' icon.")
-
-                        except NoSuchElementException as no_view_profile_element:
-                            print(f"Could not find 'Open profile in new tab' icon on intermediate page for {person_name}: {no_view_profile_element}")
-                            driver.back() # Go back to search results
-                            print("Navigated back to search results because 'Open profile in new tab' icon on intermediate page not found.")
-
-
-                    except NoSuchElementException as no_name_element:
-                        print(f"Could not find person name element to click for {person_name}: {no_name_element}")
-                    except ElementClickInterceptedException as name_click_intercepted:
-                        print(f"Click intercepted while trying to click person name for {person_name}: {name_click_intercepted}")
-                    except TimeoutException as name_timeout_exception:
-                        print(f"Timeout waiting after clicking person name for {person_name}: {name_timeout_exception}")
-
-
-                    total_results.append({
-                        'person_name': person_name,
-                        'person_title': person_title,
-                        'linkedin_profile_link': linkedin_profile_link,
-                        'job_title_1': job_titles[0],
-                        'job_title_2': job_titles[1],
-                        'company_name': company_name,
-                        'location': location,
-                    })
-                    time.sleep(random.uniform(1, 3))
-                except StaleElementReferenceException as stale_e:
-                    print(f"StaleElementReferenceException on page {page_number}, item {index+1}: {stale_e}")
-                    total_results.append({
-                        'person_name': "NA",
-                        'person_title': "NA",
-                        'linkedin_profile_link': "NA",
-                        'job_title_1': "NA",
-                        'job_title_2': "NA",
-                        'company_name_1': "NA",
-                        'company_name_2': "NA",
-                        'company_description_1': "NA",
-                        'company_description_2': "NA",
-                        'email': "NA",
-                        'company_name': "NA",
-                        'location': "NA",
-                    })
-                except Exception as e:
-                    print(f"Failed to process item on page {page_number}, item {index+1}: {e}")
-                    total_results.append({
-                        'person_name': "NA",
-                        'person_title': "NA",
-                        'linkedin_profile_link': "NA",
-                        'job_title_1': "NA",
-                        'job_title_2': "NA",
-                        'company_name_1': "NA",
-                        'company_name_2': "NA",
-                        'company_description_1': "NA",
-                        'company_description_2': "NA",
-                        'email': "NA",
-                        'company_name': "NA",
-                        'location': "NA",
-                    })
-                print(f"--- Finished processing lead index: {index} on page {page_number} ---")
-
-            if len(total_results) >= max_leads:
-                # Break out of the page loop if we've reached our target.
-                break
-
-            try:
-                print("Attempting to go to next page...")
-                next_button = driver.find_element(By.CSS_SELECTOR, "button.artdeco-pagination__button--next")
-                if next_button.is_enabled():
-                    next_button.click()
-                    page_number += 1
-                    print(f"Clicked next page, moving to page {page_number}")
-                    time.sleep(random.uniform(2, 4))
-                else:
-                    print("Next button is not enabled, assuming last page")
+                    name_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "span[data-anonymize='person-name']")))
+                    name = name_element.text.strip()
                     break
-            except NoSuchElementException:
-                print("Next button not found, assuming last page")
-                break
-        except TimeoutException as timeout_page_exception:
-            print(f"Timeout occurred while waiting for leads list on page {page_number}: {timeout_page_exception}")
-            error_filename = f"page_source_timeout_page_{page_number}_{session_id}.html"
-            with open(error_filename, "w", encoding="utf-8") as file:
-                file.write(driver.page_source)
-            print(f"HTML saved to '{error_filename}'")
-            driver.save_screenshot(f"screenshot_page_{page_number}_{session_id}.png")
-            print(f"Screenshot saved to 'screenshot_page_{page_number}_{session_id}.png'")
-            break
-        except Exception as page_exception:
-            print(f"Error during page scraping on page {page_number}: {page_exception}")
-            break
+                except Exception as e:
+                    print(f"Lead {index+1}: Name extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries for name reached, using fallback.")
+                        try:
+                            headshot_anchor = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='headshot-photo']")))
+                            img = headshot_anchor.find_element(By.TAG_NAME, "img")
+                            alt_text = img.get_attribute("alt")
+                            if alt_text:
+                                name = alt_text.strip().replace("Go to ", "").replace("’s profile", "")
+                        except Exception as fallback_e:
+                            print(f"Lead {index+1}: Fallback name extraction failed: {fallback_e}")
+                            name = "NA"
+            for retry in range(MAX_RETRIES):
+                try:
+                    title_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__subtitle span[data-anonymize='title']")))
+                    title = title_element.text.strip()
+                    break
+                except Exception as e:
+                    print(f"Lead {index+1}: Title extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries for title reached, using NA.")
+                        title = "NA"
+            for retry in range(MAX_RETRIES):
+                try:
+                    profile_anchor = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__title a.ember-view")))
+                    profile_link = profile_anchor.get_attribute("href")
+                    break
+                except Exception as e:
+                    print(f"Lead {index+1}: Profile link extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries for profile link reached, using fallback.")
+                        try:
+                            headshot_anchor = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='headshot-photo']")))
+                            href = headshot_anchor.get_attribute("href")
+                            if href:
+                                profile_link = "https://www.linkedin.com" + href if href.startswith("/") else href
+                            else:
+                                profile_link = "NA"
+                        except Exception as fallback_e:
+                            print(f"Lead {index+1}: Fallback profile link extraction failed: {fallback_e}")
+                            profile_link = "NA"
+            for retry in range(MAX_RETRIES):
+                try:
+                    company_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__subtitle a")))
+                    company = company_element.text.strip()
+                    break
+                except Exception as e:
+                    print(f"Lead {index+1}: Company extraction attempt {retry+1} (using <a> tag) failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Fallback sequence for company...")
+                        try:
+                            company_element_fallback_text = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.XPATH, ".//div[@class='artdeco-entity-lockup__subtitle']//span[@class='separator--middot']/following-sibling::text()[1]")))
+                            company = company_element_fallback_text.get_attribute('textContent').strip().replace('See more about', '').strip()
+                            break
+                        except:
+                            print(f"Lead {index+1}: Fallback company extraction (text after separator) failed.")
+                            try:
+                                company_element_fallback_button = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.XPATH, ".//div[@class='artdeco-entity-lockup__subtitle']//button[@class='entity-hovercard__a11y-trigger']")))
+                                company = company_element_fallback_button.get_attribute('aria-label').replace('See more about ', '').strip()
+                                break
+                            except Exception as final_fallback_e:
+                                print(f"Lead {index+1}: Fallback company extraction (button aria-label) failed: {final_fallback_e}")
+                                company = "NA"
+                        if company != "NA":
+                            break
+                    continue
+            for retry in range(MAX_RETRIES):
+                try:
+                    location_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "span[data-anonymize='location']")))
+                    location = location_element.text.strip()
+                    break
+                except Exception as e:
+                    print(f"Lead {index+1}: Location extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries for location reached, using NA.")
+                        location = "NA"
+            for retry in range(MAX_RETRIES):
+                try:
+                    company_link_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='company-name']")))
+                    company_link = company_link_element.get_attribute("href")
+                    if company_link.startswith("/"):
+                        company_link = "https://www.linkedin.com" + company_link
+                    break
+                except Exception as e:
+                    print(f"Lead {index+1}: Company link extraction attempt {retry+1} failed: {e}")
+                    if retry == MAX_RETRIES - 1:
+                        print(f"Lead {index+1}: Max retries reached, using fallback.")
+                        company_link = "NA"
+            lead = {"Name": name, "Title": title, "Profile Link": profile_link, "Location": location, "Company": company, "Company Link": company_link}
+            print(f"Lead {index+1} extracted: {lead}")
+            leads_data.append(lead)
+        print("Leads scraping completed.")
+        return leads_data
+    except Exception as e:
+        print(f"Error scraping leads: {e}")
+        return leads_data
 
-    write_results_to_csv(total_results, session_id)
-    print(f"Data written to CSV for the scraped leads.")
+def save_leads_to_csv(leads, filename="leads_output.csv"):
+    try:
+        df = pd.DataFrame(leads)
+        df.to_csv(filename, index=False)
+        print(f"Leads data saved to CSV file: {filename}")
+    except Exception as e:
+        print(f"Error saving leads data to CSV: {e}")
 
-
-
-
-
-
-
-
-
-# -------------------------------
-# Login and Scraping Functions
-
-def perform_login(driver, credentials):
-    driver.get("https://www.linkedin.com/login")
-    WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.presence_of_element_located(SELECTORS['login_email'])
-    )
-    driver.find_element(*SELECTORS['login_email']).send_keys(credentials['email'])
-    driver.find_element(*SELECTORS['login_password']).send_keys(credentials['password'] + Keys.RETURN)
-
-    time.sleep(3)
-
-
-
-# -------------------------------
-# Core Functions
+def iterasi_csv(session_id, driver):
+    # Process all profiles at once by calling scrape_contact_info a single time.
+    scrape_contact_info(session_id, driver)
+    # Now, read the enriched CSV and return its records.
+    try:
+        enriched_df = pd.read_csv('scrape_output2.csv')
+        return enriched_df.to_dict(orient='records')
+    except Exception as e:
+        logging.error(f"Error reading enriched CSV: {e}")
+        return None
     
-def configure_driver(headless=False):
-    # Configure Chrome options.
-    chrome_options = Options()
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("start-maximized")
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    chrome_options.add_argument(f"user-agent={user_agent}")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option("useAutomationExtension", False)
-    
-    if headless:
-        chrome_options.add_argument("--headless=new")
-        
-    return webdriver.Chrome(
-        service=ChromeService(ChromeDriverManager().install()),
-        options=chrome_options
-    )
 
-
-# -----------------------
-# Main Workflow
-
-def scraping_leads(session_id, candidate_industry, candidate_job_title, candidate_seniority_level, candidate_years_experience):
-    # Load configuration from config.json (should include email and password)
+def main_scrape_leads(session_id, driver, industry, job_title, seniority_level, years_of_experience, debug=False):
     with open("config.json", "r") as config_file:
         config = json.load(config_file)
-    driver = configure_driver()
-
     try:
-        perform_login(driver, config)
-
-        # Candidate criteria input
-        criteria_text = (
-            f"Looking for [{candidate_industry}]. "
-            f"Possible funcion is [{', '.join(StaticValue().FUNCTIONS.values())}] " # Removed extra criteria for now for testing
-        )
-
-        # parse dari groq
-        parsed_data = parse_candidate_criteria(criteria_text)
-        print("Parsed candidate criteria:", parsed_data)
-
-        # Classify the candidate function.
-        candidate_function = classify_candidate_function(parsed_data)
-        apply_function_filter(driver, candidate_function, candidate_job_title, candidate_seniority_level, candidate_years_experience)
-        # scrape_results_page(driver, session_id)
-
-    finally:
-        time.sleep(10)
-        driver.quit()
-
-
-# -----------------------
-# Open Filter Page
-        
-def apply_function_filter(driver, candidate_function, candidate_job_title, candidate_seniority_level, candidate_years_experience):
-    driver.get("https://www.linkedin.com/sales/search/people?viewAllFilters=true")
-    close_overlay_if_present(driver)
-
-    def apply_single_filter(filter_type, value, tag="div"):
-        WebDriverWait(driver, WAIT_TIMEOUT).until(
-            EC.element_to_be_clickable((By.XPATH, 
-                f"//fieldset[@data-x-search-filter='{filter_type}']"))
-        ).click()
-        
-        WebDriverWait(driver, WAIT_TIMEOUT).until(
-            EC.element_to_be_clickable((By.XPATH,
-                f"//{tag}[contains(@aria-label, '{value}')]"))
-        ).click()
-        time.sleep(1)
-    
-    apply_single_filter("FUNCTION", candidate_function)
-    function_filter_retry(driver, "CURRENT_TITLE", "div", candidate_job_title, "Add current titles")
-    apply_single_filter("SENIORITY_LEVEL", candidate_seniority_level)
-    function_filter_retry(driver, "GEOGRAPHY", "div", "Jakarta", "Add locations")
-    apply_single_filter("YEARS_OF_EXPERIENCE", candidate_years_experience, "li")
-
-
-
-def function_filter_retry(driver, filter_type, tag, value, placeholder = None):
-    close_overlay_if_present(driver)
-    WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.element_to_be_clickable((By.XPATH, f"//fieldset[@data-x-search-filter='{filter_type}']"))
-    ).click()
-
-    # Locate the location input field using a retry mechanism.
-    max_attempts = MAX_RETRIES
-    if placeholder != None:
-        for attempt in range(max_attempts):
-            try:
-                location_input = WebDriverWait(driver, SHORT_TIMEOUT).until(
-                    EC.element_to_be_clickable((By.XPATH, f"//input[@placeholder='{placeholder}']"))
-                )
-                location_input.clear()
-                location_input.send_keys(value)
-                break
-            except StaleElementReferenceException as e:
-                print(f"Stale element on location input, retrying attempt {attempt+1}/{max_attempts}...")
-                time.sleep(1)
-                if attempt == max_attempts - 1:
-                    raise e
-
-    WebDriverWait(driver, WAIT_TIMEOUT).until(
-        EC.element_to_be_clickable((By.XPATH, f"//{tag}[contains(@aria-label, '{value}')]"))
-    ).click()
-
-
-# -------------------------------
-# Groq Parsing & Function Classification
-
-def clean_groq_output(raw_text):
-    try:
-        json_match = re.search(r'({.*})', raw_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-            return json.loads(json_str)
+        driver.get('https://www.linkedin.com/sales/search/people?viewAllFilters=true')
+        close_overlay_if_present(driver)
+        print("Successfully navigated to LinkedIn Sales Navigator search page.")
     except Exception as e:
-        print("Error cleaning Groq output:", e)
-    return {"function": raw_text.strip()}
+        print(f"Error navigating to URL after login: {e}")
 
+    job_title_value = job_title
+    seniority_value = seniority_level
+    industry_value = industry
+    experience_value = years_of_experience
+    matched_seniority = get_closest_match(seniority_value, StaticValue().SENIORITY_LEVEL.values())
+    matched_experience = get_closest_match(experience_value, StaticValue().YEARS_OF_EXPERIENCE.values(), score_cutoff=60)
 
+    apply_job_title_filter(driver, job_title_value)
+    apply_seniority_filter(driver, matched_seniority)
+    apply_years_experience_filter(driver, matched_experience)
+    apply_industry_filter(driver, industry_value)
 
+    leads = scrape_leads(driver)
+    print("Scraped Leads Data:")
+    for lead in leads:
+        print(lead)
+    save_leads_to_csv(leads, filename=f"{session_id}.csv")
 
-def parse_candidate_criteria(criteria_text):
-    prompt = (
-        "Get first most relevant from candidate search criteria below "
-        "Candidate criteria:\n"
-        f"\"{criteria_text}\"\n\n"
-        "For example, the output should be exactly:\n"
-        "Business Development"
-    )
+    leads_pro_data = iterasi_csv(session_id, driver)
+    if leads_pro_data:
+        save_leads_to_csv(leads_pro_data, filename=f"{session_id}_leads_pro.csv")
+    else:
+        print("No enriched leads data to save.")
 
-    load_dotenv()
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    response = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        model="llama-3.3-70b-versatile"
-    )
-    raw_output = response.choices[0].message.content
-    # structured_data = clean_groq_output(raw_output)
-    return raw_output
-
-
-
-def classify_candidate_function(parsed_data):
-    candidate_function = parsed_data.get("function", "").strip()
-    for func in StaticValue().FUNCTIONS.values():
-        if candidate_function.lower() == func.lower() or candidate_function.lower() in func.lower():
-            return func
-    return candidate_function
-
-
-def classify_candidate_seniority_level(parsed_data):
-    candidate_seniority_level = parsed_data.get("seniority level", "").strip()
-    for senior in StaticValue().SENIORITY_LEVEL.values():
-        if candidate_seniority_level.lower() == senior.lower() or candidate_seniority_level.lower() in senior.lower():
-            return senior
-    return candidate_seniority_level
+    company_info(driver, session_id)
