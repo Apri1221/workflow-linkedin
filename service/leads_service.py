@@ -41,9 +41,8 @@ def check_session():
         "timeout": 300000
     }
     platforms.append(data)
-
-    cookies = get_cookies()
-    return cookies
+    # cookies = get_cookies()
+    return platforms
 
 
 def start_search_leads_task(session_id: str, data: dict, driver: webdriver.Chrome):

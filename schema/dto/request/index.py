@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import List
 from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic.alias_generators import to_snake
 from utils.constant import StaticValue
@@ -16,6 +16,20 @@ class BaseSchema(BaseModel):
 class CommonHeaders(BaseModel):
     host: str | None = None
     sessionId: str | None = None
+
+
+class CookiesRequest(BaseSchema):
+    key: str
+    value: str
+    domain: str
+    path: str
+    hostOnly: bool
+    creation: str
+    lastAccessed: str
+    sameSite: str
+    expires: str
+    secure: bool
+    httpOnly: bool
 
 
 class PromptRequest(BaseSchema):
@@ -59,7 +73,7 @@ class PromptRequest(BaseSchema):
         if v == None:
             raise ValueError('field `seniorityLevel` required')
     
-        allowed_values = StaticValue().SENIORITY_LEVEL.values()
+        allowed_values = StaticValue().SENIORITY_LEVEL.keys()
         allowed_lower_map = {value.lower(): value for value in allowed_values}
         invalid_levels = []
         valid_levels = []
@@ -79,24 +93,6 @@ class PromptRequest(BaseSchema):
             )
         
         return valid_levels
-
-    @field_validator('industry')
-    def check_industry(cls, v: str) -> str:
-        if v == None:
-            raise ValueError('field `industry` required')
-        
-        allowed_values = StaticValue().INDUSTRY.values()
-        allowed_lower_map = {value.lower(): value for value in allowed_values}
-        lower_v = v.lower().strip()
-
-        if lower_v not in allowed_lower_map:
-            allowed_str = ", ".join(allowed_values)
-            raise ValueError(
-                f"Invalid value `{v}` on `industry` field - "
-                f"Allowed values: {allowed_str}"
-            )
-        
-        return allowed_lower_map[lower_v]
     
 
 

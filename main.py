@@ -104,20 +104,27 @@ async def handle_exception(request: Request, exc: Exception):
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     error_messages = []
     for err in exc.errors():
-        error_messages.append(err['msg'])
-    
-    # Split combined messages into array and clean up
-    split_errors = [
-        error.strip() 
-        for error in ", ".join(error_messages).split("Value error,") 
-        if error.strip()
-    ]
+        error_location = err["loc"]
+        index = error_location[1]  # Index in the list
+        if (err['type'] == 'value_error'):
+            error = err['msg']
+            error_messages.append({
+                "index": index,
+                "detail": error.replace("Value error,", "").strip()
+            })
+        else:
+            if error_location[0] == "body":
+                field = error_location[2]
+                error_messages.append({
+                    "index": index,
+                    "detail": f"Missing field '{field}'"
+                })
 
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "success": False,
-            "message": split_errors
+            "message": error_messages
         }
     )
 

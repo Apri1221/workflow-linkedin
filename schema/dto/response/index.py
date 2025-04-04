@@ -22,7 +22,16 @@ class DataTask(BaseSchema):
     state: dict | None = None
     next: dict | None = None
 
-class DataSetup(BaseSchema):
+class Profile(BaseSchema):
+    title: str | None = None
+    data: dict | None = None
+
+class DataCookies(BaseSchema):
+    approved: bool | None = None
+    profile: Profile | None = None
+    reason: str | None = None
+
+class DataPrompt(BaseSchema):
     platforms: List[dict] | None = None
     result: dict
     state: dict | None = None
@@ -35,5 +44,5 @@ class TaskResponse(BaseSchema):
 
 class SetupResponse(BaseSchema):
     success: bool
-    data: DataSetup
+    data: DataPrompt
     error: dict | str | None = None

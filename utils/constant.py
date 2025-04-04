@@ -10,7 +10,7 @@ class ConstantsTask:
     ANALYZE_LEAD_DATA = "analyze-profile-data"
 
 class SeniorityLevel:
-    ENTRY = "Entry Level"
+    ENTRY = "Entry-level positions"
     SENIOR = "Experienced professionals"
     MANAGER = "Mid-level management"
     DIRECTOR = "Senior management"
@@ -18,13 +18,12 @@ class SeniorityLevel:
     CX    = "C-level executives (e.g., CEO, CFO)"
     PARTNER = "Business partners"
     OWNER = "Business owners"
-    CXO = "CXO"
 
 class YearsOfExperience:
     LESS_THAN_ONE_YEAR = "Less than 1 year"
-    ONE_TO_TWO_YEARS = "1 to 2 years"
-    THREE_TO_FIVE_YEARS = "3 to 5 years"
-    SIX_TO_TEN_YEARS = "6 to 10 years"
+    ONE_TO_TWO_YEARS = "1-2 years"
+    THREE_TO_FIVE_YEARS = "3-5 years"
+    SIX_TO_TEN_YEARS = "6-10 years"
     MORE_THAN_TEN_YEARS = "More than 10 years"
 
 class Functions:
@@ -214,30 +213,35 @@ class Industry:
 
 
 
+def to_pascal_case(key):
+    parts = key.split('_')
+    return ' '.join(part.capitalize() if len(part) > 0 else part for part in parts)
+
+
 class StaticValue:
     @classmethod
     def get_seniority_levels(cls):
-        return {k: v for k, v in vars(SeniorityLevel).items() 
+        return {to_pascal_case(k): v for k, v in vars(SeniorityLevel).items() 
                 if not k.startswith('__') and k.isupper()}
     
     @classmethod
     def get_years_of_experience(cls):
-        return {k: v for k, v in vars(YearsOfExperience).items() 
+        return {to_pascal_case(k): v for k, v in vars(YearsOfExperience).items() 
                 if not k.startswith('__') and k.isupper()}
     
     @classmethod
     def get_functions(cls):
-        return {k: v for k, v in vars(Functions).items() 
+        return {to_pascal_case(k): v for k, v in vars(Functions).items() 
                 if not k.startswith('__') and k.isupper()}
     
     @classmethod
     def get_company_headcount(cls):
-        return {k: v for k, v in vars(CompanyHeadcount).items() 
+        return {to_pascal_case(k): v for k, v in vars(CompanyHeadcount).items() 
                 if not k.startswith('__') and k.isupper()}
     
     @classmethod
     def get_industry(cls):
-        return {k: v for k, v in vars(Industry).items() 
+        return {to_pascal_case(k): v for k, v in vars(Industry).items() 
                 if not k.startswith('__') and k.isupper()}
     
     @property
