@@ -1,27 +1,22 @@
 import logging
+import asyncio
+
 from fastapi import APIRouter
 from schema.dto.response.index import SetupResponse, DataSetup
 from schema.dto.request.index import PromptRequest
 from service.leads_service import init, check_session
 from utils.uuid import uuid7
-import asyncio
 import globals
-
 
 # ------------- configuration
 state_lock = asyncio.Lock()
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)-8s:\t %(name)-20s %(message)s"
-)
 # -------------- end configuration
 
 
-
-
+# Existing routes
 @router.post("/cookies")
 async def initial_setup():
     data = init()

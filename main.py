@@ -16,7 +16,7 @@ import sys
 import os
 import globals
 import time
-
+import atexit  # Import atexit for cleanup on exit
 
 
 config = dotenv_values(".env")
@@ -120,6 +120,20 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "message": split_errors
         }
     )
+
+
+# Optional: Import and ensure cleanup of WebDriver sessions on application exit
+try:
+    from api.endpoints.chrome import driver_manager
+    
+    # Register cleanup function on exit
+    @atexit.register
+    def cleanup_driver_sessions():
+        logger.info("Cleaning up all Chrome WebDriver sessions")
+        driver_manager.close_all_sessions()
+        
+except ImportError:
+    logger.info("Chrome WebDriver manager not available")
 
 
 if __name__ == "__main__":

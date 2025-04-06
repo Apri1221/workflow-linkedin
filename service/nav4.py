@@ -21,11 +21,26 @@ from selenium.webdriver.common.keys import Keys
 from service.info_service import scrape_contact_info, iterasi_csv
 from service.company_service import company_info
 import traceback
+import logging
+
+# Configure the logger for detailed output
+logger = logging.getLogger(__name__)
+
 
 WAIT_TIMEOUT = 30
 SHORT_TIMEOUT = 10
 MAX_RETRIES = 3
 YEAR_EXPERIENCE = ["Less than 1 year", "1 to 2 years", "3 to 5 years", "6 to 10 years", "More than 10 years"]
+
+# Function to wrap other functions with logging
+def with_logging(original_function, session_id):
+    """Wrap a function to add session-specific logging"""
+    def wrapper(*args, **kwargs):
+        logger.info(f"[Session {session_id}] Starting: {original_function.__name__}")
+        result = original_function(*args, **kwargs)
+        logger.info(f"[Session {session_id}] Completed: {original_function.__name__}")
+        return result
+    return wrapper
 
 def get_closest_match(extracted_value, options_list, score_cutoff=80):
     print(f"get_closest_match called with extracted_value: {extracted_value}, type: {type(extracted_value)}")
@@ -201,62 +216,85 @@ def scroll_infinite_scroll_data_attribute(driver, scrollable_element=None, pause
     print("Infinite scroll using data-scroll-into-view completed.")
 
 def scrape_leads(driver):
-    print("Identifying search results container for scrolling...")
-    search_results_container = WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.ID, "search-results-container")))
-    print("Search results container found.")
-    scroll_infinite_scroll_data_attribute(driver, scrollable_element=search_results_container, pause_time=10, max_attempts=15, initial_wait=5, step_wait=3)
-    print("Waiting for lead items to be present after scrolling...")
-    WebDriverWait(driver, 30).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")))
-    print("Lead items found after scrolling.")
-    print("Finished scrolling. Now scraping leads...")
-    leads_data = []
+    """
+    Scrape leads from LinkedIn Sales Navigator search results
+    
+    Args:
+        driver: WebDriver instance
+        
+    Returns:
+        List of dictionaries containing lead data
+    """
+    leads_data = []  # Initialize leads_data at the beginning
+    
     try:
+        logger.info("Identifying search results container for scrolling...")
+        search_results_container = WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.ID, "search-results-container")))
+        logger.info("Search results container found.")
+        
+        # Scroll to load more results
+        scroll_infinite_scroll_data_attribute(driver, scrollable_element=search_results_container, pause_time=10, max_attempts=15, initial_wait=5, step_wait=3)
+        
+        logger.info("Waiting for lead items to be present after scrolling...")
+        WebDriverWait(driver, 30).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")))
+        logger.info("Lead items found after scrolling.")
+        
+        # Find all lead items
         lead_items = driver.find_elements(By.CSS_SELECTOR, "li.artdeco-list__item.pl3.pv3")
-        print(f"Found {len(lead_items)} lead items on the page.")
+        logger.info(f"Found {len(lead_items)} lead items on the page.")
+        
+        # Process each lead
         for index, item in enumerate(lead_items):
+            # Initialize variables for each lead
             name = "NA"
             title = "NA"
             profile_link = "NA"
             location = "NA"
             company = "NA"
             company_link = "NA"
+            
+            # Extract name
             for retry in range(MAX_RETRIES):
                 try:
                     name_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "span[data-anonymize='person-name']")))
                     name = name_element.text.strip()
                     break
                 except Exception as e:
-                    print(f"Lead {index+1}: Name extraction attempt {retry+1} failed: {e}")
+                    logger.warning(f"Lead {index+1}: Name extraction attempt {retry+1} failed: {e}")
                     if retry == MAX_RETRIES - 1:
-                        print(f"Lead {index+1}: Max retries for name reached, using fallback.")
+                        logger.warning(f"Lead {index+1}: Max retries for name reached, using fallback.")
                         try:
                             headshot_anchor = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='headshot-photo']")))
                             img = headshot_anchor.find_element(By.TAG_NAME, "img")
                             alt_text = img.get_attribute("alt")
                             if alt_text:
-                                name = alt_text.strip().replace("Go to ", "").replace("’s profile", "")
+                                name = alt_text.strip().replace("Go to ", "").replace("'s profile", "")
                         except Exception as fallback_e:
-                            print(f"Lead {index+1}: Fallback name extraction failed: {fallback_e}")
+                            logger.warning(f"Lead {index+1}: Fallback name extraction failed: {fallback_e}")
                             name = "NA"
+            
+            # Extract title
             for retry in range(MAX_RETRIES):
                 try:
                     title_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__subtitle span[data-anonymize='title']")))
                     title = title_element.text.strip()
                     break
                 except Exception as e:
-                    print(f"Lead {index+1}: Title extraction attempt {retry+1} failed: {e}")
+                    logger.warning(f"Lead {index+1}: Title extraction attempt {retry+1} failed: {e}")
                     if retry == MAX_RETRIES - 1:
-                        print(f"Lead {index+1}: Max retries for title reached, using NA.")
+                        logger.warning(f"Lead {index+1}: Max retries for title reached, using NA.")
                         title = "NA"
+            
+            # Extract profile link
             for retry in range(MAX_RETRIES):
                 try:
                     profile_anchor = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__title a.ember-view")))
                     profile_link = profile_anchor.get_attribute("href")
                     break
                 except Exception as e:
-                    print(f"Lead {index+1}: Profile link extraction attempt {retry+1} failed: {e}")
+                    logger.warning(f"Lead {index+1}: Profile link extraction attempt {retry+1} failed: {e}")
                     if retry == MAX_RETRIES - 1:
-                        print(f"Lead {index+1}: Max retries for profile link reached, using fallback.")
+                        logger.warning(f"Lead {index+1}: Max retries for profile link reached, using fallback.")
                         try:
                             headshot_anchor = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='headshot-photo']")))
                             href = headshot_anchor.get_attribute("href")
@@ -265,43 +303,49 @@ def scrape_leads(driver):
                             else:
                                 profile_link = "NA"
                         except Exception as fallback_e:
-                            print(f"Lead {index+1}: Fallback profile link extraction failed: {fallback_e}")
+                            logger.warning(f"Lead {index+1}: Fallback profile link extraction failed: {fallback_e}")
                             profile_link = "NA"
+            
+            # Extract company
             for retry in range(MAX_RETRIES):
                 try:
                     company_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.artdeco-entity-lockup__subtitle a")))
                     company = company_element.text.strip()
                     break
                 except Exception as e:
-                    print(f"Lead {index+1}: Company extraction attempt {retry+1} (using <a> tag) failed: {e}")
+                    logger.warning(f"Lead {index+1}: Company extraction attempt {retry+1} (using <a> tag) failed: {e}")
                     if retry == MAX_RETRIES - 1:
-                        print(f"Lead {index+1}: Fallback sequence for company...")
+                        logger.warning(f"Lead {index+1}: Fallback sequence for company...")
                         try:
                             company_element_fallback_text = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.XPATH, ".//div[@class='artdeco-entity-lockup__subtitle']//span[@class='separator--middot']/following-sibling::text()[1]")))
                             company = company_element_fallback_text.get_attribute('textContent').strip().replace('See more about', '').strip()
                             break
                         except:
-                            print(f"Lead {index+1}: Fallback company extraction (text after separator) failed.")
+                            logger.warning(f"Lead {index+1}: Fallback company extraction (text after separator) failed.")
                             try:
                                 company_element_fallback_button = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.XPATH, ".//div[@class='artdeco-entity-lockup__subtitle']//button[@class='entity-hovercard__a11y-trigger']")))
                                 company = company_element_fallback_button.get_attribute('aria-label').replace('See more about ', '').strip()
                                 break
                             except Exception as final_fallback_e:
-                                print(f"Lead {index+1}: Fallback company extraction (button aria-label) failed: {final_fallback_e}")
+                                logger.warning(f"Lead {index+1}: Fallback company extraction (button aria-label) failed: {final_fallback_e}")
                                 company = "NA"
                         if company != "NA":
                             break
                     continue
+            
+            # Extract location
             for retry in range(MAX_RETRIES):
                 try:
                     location_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "span[data-anonymize='location']")))
                     location = location_element.text.strip()
                     break
                 except Exception as e:
-                    print(f"Lead {index+1}: Location extraction attempt {retry+1} failed: {e}")
+                    logger.warning(f"Lead {index+1}: Location extraction attempt {retry+1} failed: {e}")
                     if retry == MAX_RETRIES - 1:
-                        print(f"Lead {index+1}: Max retries for location reached, using NA.")
+                        logger.warning(f"Lead {index+1}: Max retries for location reached, using NA.")
                         location = "NA"
+            
+            # Extract company link
             for retry in range(MAX_RETRIES):
                 try:
                     company_link_element = WebDriverWait(item, SHORT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-anonymize='company-name']")))
@@ -310,71 +354,179 @@ def scrape_leads(driver):
                         company_link = "https://www.linkedin.com" + company_link
                     break
                 except Exception as e:
-                    print(f"Lead {index+1}: Company link extraction attempt {retry+1} failed: {e}")
+                    logger.warning(f"Lead {index+1}: Company link extraction attempt {retry+1} failed: {e}")
                     if retry == MAX_RETRIES - 1:
-                        print(f"Lead {index+1}: Max retries reached, using fallback.")
+                        logger.warning(f"Lead {index+1}: Max retries reached, using fallback.")
                         company_link = "NA"
-            lead = {"Name": name, "Title": title, "Profile Link": profile_link, "Location": location, "Company": company, "Company Link": company_link}
-            print(f"Lead {index+1} extracted: {lead}")
+            
+            # Create lead object and add to list
+            lead = {
+                "Name": name,
+                "Title": title,
+                "Profile Link": profile_link,
+                "Location": location,
+                "Company": company,
+                "Company Link": company_link
+            }
+            logger.info(f"Lead {index+1} extracted: {lead}")
             leads_data.append(lead)
-        print("Leads scraping completed.")
+            
+        logger.info(f"Successfully scraped {len(leads_data)} leads")
         return leads_data
+        
     except Exception as e:
-        print(f"Error scraping leads: {e}")
-        return leads_data
+        logger.error(f"Error scraping leads: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return leads_data  # Return whatever leads were collected before the error
 
 def save_leads_to_csv(leads, filename="leads_output.csv"):
+    """
+    Save lead data to a CSV file
+    
+    Args:
+        leads: List of dictionaries containing lead data
+        filename: Name of the CSV file to save
+    """
     try:
+        # Check if leads data is empty
+        if not leads or len(leads) == 0:
+            logger.warning(f"No leads data to save to {filename}")
+            # Create an empty file with headers to prevent future errors
+            df = pd.DataFrame(columns=["Name", "Title", "Profile Link", "Location", "Company", "Company Link"])
+            df.to_csv(filename, index=False)
+            logger.info(f"Created empty CSV file with headers: {filename}")
+            return
+        
+        # Create DataFrame and save to CSV
         df = pd.DataFrame(leads)
         df.to_csv(filename, index=False)
-        print(f"Leads data saved to CSV file: {filename}")
+        logger.info(f"Leads data saved to CSV file: {filename} - {len(leads)} leads")
     except Exception as e:
-        print(f"Error saving leads data to CSV: {e}")
+        logger.error(f"Error saving leads data to CSV: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 def iterasi_csv(session_id, driver):
-    # Process all profiles at once by calling scrape_contact_info a single time.
-    scrape_contact_info(session_id, driver)
-    # Now, read the enriched CSV and return its records.
+    """
+    Process the CSV file containing lead data and enrich it with contact information
+    
+    Args:
+        session_id: Session ID for file naming
+        driver: WebDriver instance
+        
+    Returns:
+        List of dictionaries containing enriched lead data or None if error
+    """
     try:
-        enriched_df = pd.read_csv('scrape_output2.csv')
-        return enriched_df.to_dict(orient='records')
+        # Check if the CSV file exists and has content
+        import os
+        csv_filepath = f"{session_id}.csv"
+        
+        if not os.path.exists(csv_filepath):
+            logger.error(f"[Session {session_id}] CSV file {csv_filepath} does not exist")
+            return None
+            
+        if os.path.getsize(csv_filepath) == 0:
+            logger.error(f"[Session {session_id}] CSV file {csv_filepath} is empty")
+            return None
+            
+        # Process all profiles at once by calling scrape_contact_info
+        logger.info(f"[Session {session_id}] Starting to scrape contact info for leads")
+        scrape_contact_info(session_id, driver)
+        
+        # Now, read the enriched CSV and return its records
+        output_csv = 'scrape_output2.csv'
+        if os.path.exists(output_csv) and os.path.getsize(output_csv) > 0:
+            logger.info(f"[Session {session_id}] Reading enriched data from {output_csv}")
+            enriched_df = pd.read_csv(output_csv)
+            return enriched_df.to_dict(orient='records')
+        else:
+            logger.warning(f"[Session {session_id}] Enriched CSV file {output_csv} is empty or doesn't exist")
+            return None
     except Exception as e:
-        logging.error(f"Error reading enriched CSV: {e}")
+        logger.error(f"[Session {session_id}] Error in iterasi_csv: {str(e)}")
+        import traceback
+        logger.error(f"[Session {session_id}] Traceback: {traceback.format_exc()}")
         return None
     
 
+# Modify the main_scrape_leads function to include detailed logging
 def main_scrape_leads(session_id, driver, industry, job_title, seniority_level, years_of_experience, debug=False):
+    """
+    Main function to scrape LinkedIn leads with enhanced logging
+    """
+    logger.info(f"[Session {session_id}] Starting LinkedIn scraping process")
+    logger.info(f"[Session {session_id}] Parameters: job_title={job_title}, industry={industry}, seniority={seniority_level}, experience={years_of_experience}")
+    
     with open("config.json", "r") as config_file:
         config = json.load(config_file)
+    
+    # Wrap certain functions with logging
+    wrapped_close_overlay = with_logging(close_overlay_if_present, session_id)
+    
     try:
+        logger.info(f"[Session {session_id}] Navigating to LinkedIn Sales Navigator search page")
         driver.get('https://www.linkedin.com/sales/search/people?viewAllFilters=true')
-        close_overlay_if_present(driver)
-        print("Successfully navigated to LinkedIn Sales Navigator search page.")
+        wrapped_close_overlay(driver)
+        logger.info(f"[Session {session_id}] Successfully navigated to LinkedIn Sales Navigator")
     except Exception as e:
-        print(f"Error navigating to URL after login: {e}")
+        logger.error(f"[Session {session_id}] Error navigating to URL: {str(e)}")
+        raise
 
+    # Log the filter values being applied
     job_title_value = job_title
     seniority_value = seniority_level
     industry_value = industry
     experience_value = years_of_experience
+    
+    logger.info(f"[Session {session_id}] Getting closest match for seniority: {seniority_value}")
     matched_seniority = get_closest_match(seniority_value, StaticValue().SENIORITY_LEVEL.values())
+    logger.info(f"[Session {session_id}] Matched seniority: {matched_seniority}")
+    
+    logger.info(f"[Session {session_id}] Getting closest match for experience: {experience_value}")
     matched_experience = get_closest_match(experience_value, StaticValue().YEARS_OF_EXPERIENCE.values(), score_cutoff=60)
+    logger.info(f"[Session {session_id}] Matched experience: {matched_experience}")
 
+    # Apply filters with logging
+    logger.info(f"[Session {session_id}] Applying job title filter: {job_title_value}")
     apply_job_title_filter(driver, job_title_value)
+    
+    logger.info(f"[Session {session_id}] Applying seniority filter: {matched_seniority}")
     apply_seniority_filter(driver, matched_seniority)
+    
+    logger.info(f"[Session {session_id}] Applying experience filter: {matched_experience}")
     apply_years_experience_filter(driver, matched_experience)
+    
+    logger.info(f"[Session {session_id}] Applying industry filter: {industry_value}")
     apply_industry_filter(driver, industry_value)
 
+    # Start scraping
+    logger.info(f"[Session {session_id}] Starting to scrape leads")
     leads = scrape_leads(driver)
-    print("Scraped Leads Data:")
-    for lead in leads:
-        print(lead)
-    save_leads_to_csv(leads, filename=f"{session_id}.csv")
+    logger.info(f"[Session {session_id}] Scraped {len(leads)} leads")
+    
+    # Save leads to CSV
+    csv_filename = f"{session_id}.csv"
+    logger.info(f"[Session {session_id}] Saving leads to {csv_filename}")
+    save_leads_to_csv(leads, filename=csv_filename)
+    logger.info(f"[Session {session_id}] Successfully saved leads to {csv_filename}")
 
+    # Enrich leads with contact info
+    logger.info(f"[Session {session_id}] Starting to enrich leads with contact information")
     leads_pro_data = iterasi_csv(session_id, driver)
     if leads_pro_data:
-        save_leads_to_csv(leads_pro_data, filename=f"{session_id}_leads_pro.csv")
+        enriched_csv = f"{session_id}_leads_pro.csv"
+        logger.info(f"[Session {session_id}] Saving enriched leads to {enriched_csv}")
+        save_leads_to_csv(leads_pro_data, filename=enriched_csv)
+        logger.info(f"[Session {session_id}] Successfully saved enriched leads to {enriched_csv}")
     else:
-        print("No enriched leads data to save.")
+        logger.warning(f"[Session {session_id}] No enriched leads data to save")
 
+    # Get company info
+    logger.info(f"[Session {session_id}] Gathering company information")
     company_info(driver, session_id)
+    logger.info(f"[Session {session_id}] LinkedIn scraping process completed successfully")
+
+    # Return the leads
+    return leads
